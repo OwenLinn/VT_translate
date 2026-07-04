@@ -7,6 +7,7 @@ data/
 outputs/
 work/
 models/
+runtime_logs/
 *.wav
 *.sqlite3
 *.jsonl

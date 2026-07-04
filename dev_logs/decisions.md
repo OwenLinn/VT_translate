@@ -169,3 +169,11 @@
 - The interactive Windows launch script executes Python with a PowerShell
   argument array instead of `Invoke-Expression`, so user-entered audio paths and
   CLI options are not reparsed as a single command string.
+- Added `models/anime-whisper-ct2-fp16` as an experimental
+  faster-whisper-compatible ASR model for Japanese anime / VTuber-style speech
+  testing. It is loaded through the existing faster-whisper/CTranslate2 path,
+  not a Transformers pipeline, and it does not replace
+  `models/faster-whisper-large-v3` as the default model.
+- Local ASR model comparison reports are generated under
+  `runtime_logs/asr_model_tests/` and are ignored by Git because they are
+  machine/test-run artifacts.

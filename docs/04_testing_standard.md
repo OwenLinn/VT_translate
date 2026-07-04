@@ -72,6 +72,7 @@ Expected:
 python scripts/smoke_asr_file.py --audio sample_en.wav --language en
 python scripts/smoke_asr_file.py --audio sample_ja.wav --language ja
 python scripts/smoke_asr_file.py --audio "C:\Users\Owen\Desktop\test_miko_audio.mp3" --language ja --model models\faster-whisper-large-v3 --device cuda --compute-type float16 --beam-size 1 --no-cpu-fallback
+python scripts/smoke_asr_file.py --audio "C:\Users\Owen\Desktop\test_miko_audio.mp3" --language ja --model models\anime-whisper-ct2-fp16 --device cuda --compute-type float16 --beam-size 3 --no-cpu-fallback
 ```
 
 Expected:
@@ -80,6 +81,25 @@ Expected:
 - language respected
 - GPU usage if available
 - local `models\faster-whisper-large-v3` loads without HuggingFace download
+- local `models\anime-whisper-ct2-fp16` loads as a faster-whisper-compatible
+  CTranslate2 model without Transformers
+
+### Local Audio ASR + Translation File Test
+
+```bash
+python scripts/smoke_audio_translate_file.py --audio "C:\Users\Owen\Desktop\test_miko_audio.mp3" --source-lang ja --target zh-TW --asr-provider faster_whisper --asr-model models\anime-whisper-ct2-fp16 --device cuda --compute-type float16 --beam-size 3 --translation echo --no-cpu-fallback
+python scripts/smoke_audio_translate_file.py --audio "C:\Users\Owen\Desktop\test_miko_audio.mp3" --source-lang ja --target zh-TW --asr-provider faster_whisper --asr-model models\anime-whisper-ct2-fp16 --device cuda --compute-type float16 --beam-size 3 --translation deepseek --no-cpu-fallback
+python scripts/smoke_audio_translate_file.py --audio "C:\Users\Owen\Desktop\test_miko_audio.mp3" --source-lang ja --target zh-TW --asr-provider faster_whisper --asr-model models\faster-whisper-large-v3 --device cuda --compute-type float16 --beam-size 3 --translation deepseek --no-cpu-fallback
+```
+
+Expected:
+
+- selected model path, device, compute type, CTranslate2 CUDA device count, and
+  CPU fallback status are printed
+- ASR output and translation output are printed
+- ASR latency, translation latency, and total latency are printed
+- `--no-cpu-fallback` fails clearly instead of silently using CPU
+- reports are written under `runtime_logs/asr_model_tests/`
 
 ### Terminal Pipeline
 

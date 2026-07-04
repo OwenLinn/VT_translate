@@ -18,7 +18,7 @@ if hasattr(sys.stderr, "reconfigure"):
 from yt_live_translator.core.config import ConfigError, load_config
 from yt_live_translator.core.logging_config import configure_logging
 from yt_live_translator.core.models import SourceLanguage
-from yt_live_translator.speech.asr_faster_whisper import ASRError, transcribe_file
+from yt_live_translator.speech.asr_faster_whisper import ASRError, collect_runtime_diagnostics, transcribe_file
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +63,18 @@ def main(argv: list[str] | None = None) -> int:
         f"audio={args.audio}, language={language}, model={model_size}, "
         f"device={device}, compute_type={compute_type}, beam_size={beam_size}"
     )
+    diagnostics = collect_runtime_diagnostics(
+        model_size=model_size,
+        device=device,
+        compute_type=compute_type,
+    )
+    print(f"Selected model path: {diagnostics.model_path}")
+    print(f"Model path exists: {diagnostics.model_path_exists}")
+    print(f"CTranslate2 available: {diagnostics.ctranslate2_available}")
+    if diagnostics.cuda_device_count is not None:
+        print(f"CTranslate2 CUDA devices: {diagnostics.cuda_device_count}")
+    elif diagnostics.ctranslate2_error:
+        print(f"CTranslate2 diagnostic error: {diagnostics.ctranslate2_error}")
 
     try:
         result = transcribe_file(
@@ -80,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if result.used_cpu_fallback:
         print("Warning: CUDA ASR failed; used CPU int8 fallback.")
+    print(f"CPU fallback used: {result.used_cpu_fallback}")
     print(
         f"Detected language: {result.language}; device={result.device}; "
         f"compute_type={result.compute_type}; latency={result.latency_ms:.0f} ms"

@@ -559,3 +559,46 @@ This file records completed development tasks.
 - Notes:
   - The current shell PATH still does not expose `git`, so Git commands were
     run with the full Git executable path.
+
+## 2026-07-04 Anime Whisper Local Audio Smoke
+
+- Completed:
+  - Verified `models\anime-whisper-ct2-fp16` exists locally and has the
+    expected faster-whisper / CTranslate2 model files.
+  - Added ASR runtime diagnostics for selected model path, model path
+    existence, CTranslate2 availability, CUDA device count, requested device,
+    requested compute type, and CPU fallback status.
+  - Updated `scripts\smoke_asr_file.py` to print ASR startup diagnostics.
+  - Added `scripts\smoke_audio_translate_file.py` for local audio -> ASR ->
+    translation smoke testing with `faster_whisper`, `echo` or `deepseek`,
+    glossary matching/post-processing, latency reporting, strict
+    `--no-cpu-fallback`, and timestamped reports under
+    `runtime_logs\asr_model_tests`.
+  - Added a DeepSeek missing-key preflight so `deepseek` mode fails before
+    loading the ASR model when `DEEPSEEK_API_KEY` is absent.
+  - Added `runtime_logs/` to `.gitignore`.
+  - Updated testing and runtime-config docs with anime-whisper smoke commands.
+- Tests:
+  - `.venv\Scripts\python.exe -m py_compile src\yt_live_translator\speech\asr_faster_whisper.py scripts\smoke_asr_file.py scripts\smoke_audio_translate_file.py`
+    passed.
+  - `.venv\Scripts\pytest.exe tests\test_asr_faster_whisper.py tests\test_smoke_audio_translate_file.py tests\test_smoke_pipeline_terminal.py`
+    passed with 12 tests.
+  - Anime-whisper ASR-only smoke on `C:\Users\Owen\Desktop\test_miko_audio.mp3`
+    with CUDA float16, beam 3, and `--no-cpu-fallback` completed with
+    `device=cuda`, `compute_type=float16`, `CTranslate2 CUDA devices: 1`, no
+    CPU fallback, 175.09s audio duration, and about 16.8s ASR latency.
+  - Anime-whisper ASR + echo translation smoke completed with no CPU fallback
+    and wrote `runtime_logs\asr_model_tests\anime_whisper_ct2_fp16_test_20260704_121339.txt`.
+  - Large-v3 baseline ASR + echo translation smoke completed with no CPU
+    fallback and wrote
+    `runtime_logs\asr_model_tests\large_v3_baseline_20260704_121449.txt`.
+  - DeepSeek missing-key preflight returned a clear error without loading the
+    ASR model.
+  - `.venv\Scripts\pytest.exe` passed with 107 tests.
+  - Project scan found no pasted `sk-` DeepSeek API key.
+- Notes:
+  - `DEEPSEEK_API_KEY` was not present in the process environment, so the
+    DeepSeek translation smoke was not run in this pass.
+  - On the local Miko test audio, anime-whisper was faster than local large-v3
+    but produced repeated/hallucinated text in several sections. Large-v3 was
+    slower but much more coherent on this sample.

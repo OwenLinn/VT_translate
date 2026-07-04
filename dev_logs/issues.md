@@ -36,9 +36,16 @@ This file records unresolved bugs, risks, and technical problems.
   effects. It does not sample the actual YouTube/desktop background or perform
   shader-based refraction yet; those remain future work after user confirms the
   tuned visual parameters.
-- The current workspace has no `.git` directory, and `git.exe` is not available
-  on PATH. Git status, staging, and commit updates cannot be performed here
-  until the correct repository metadata and Git executable are available.
+- A local Git repository now exists, but the current PowerShell session still
+  does not expose `git.exe` on PATH. Use `C:\Program Files\Git\cmd\git.exe` or
+  refresh the shell PATH until `git` works directly.
+- On `C:\Users\Owen\Desktop\test_miko_audio.mp3`, `models\anime-whisper-ct2-fp16`
+  ran successfully on CUDA without CPU fallback and was faster than local
+  large-v3, but produced repeated/hallucinated text in several sections. Keep
+  large-v3 as the default until anime-whisper is tested on cleaner and longer
+  VTuber/anime-style audio.
+- The anime-whisper DeepSeek translation smoke was not run because
+  `DEEPSEEK_API_KEY` was not present in the process environment.
 
 ## Resolved Issues
 

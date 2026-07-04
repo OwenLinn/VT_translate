@@ -37,6 +37,19 @@ class ASRFileResult:
     used_cpu_fallback: bool = False
 
 
+@dataclass(frozen=True)
+class ASRRuntimeDiagnostics:
+    model_size: str
+    model_path: Path
+    model_path_exists: bool
+    requested_device: str
+    requested_compute_type: str
+    ctranslate2_available: bool
+    cuda_device_count: int | None
+    cuda_available: bool | None
+    ctranslate2_error: str | None = None
+
+
 ModelFactory = Callable[..., Any]
 
 
@@ -160,6 +173,44 @@ def transcribe_file(
         cpu_fallback=cpu_fallback,
         model_factory=model_factory,
     ).transcribe(audio_path)
+
+
+def collect_runtime_diagnostics(
+    *,
+    model_size: str,
+    device: str,
+    compute_type: str,
+) -> ASRRuntimeDiagnostics:
+    """Collect non-invasive ASR startup diagnostics for smoke tests."""
+
+    model_path = Path(model_size)
+    if not model_path.is_absolute():
+        model_path = Path.cwd() / model_path
+    ctranslate2_available = False
+    cuda_device_count: int | None = None
+    cuda_available: bool | None = None
+    ctranslate2_error: str | None = None
+    try:
+        ctranslate2 = import_module("ctranslate2")
+        ctranslate2_available = True
+        get_cuda_device_count = getattr(ctranslate2, "get_cuda_device_count", None)
+        if callable(get_cuda_device_count):
+            cuda_device_count = int(get_cuda_device_count())
+            cuda_available = cuda_device_count > 0
+    except Exception as exc:
+        ctranslate2_error = str(exc)
+
+    return ASRRuntimeDiagnostics(
+        model_size=model_size,
+        model_path=model_path,
+        model_path_exists=model_path.exists(),
+        requested_device=device,
+        requested_compute_type=compute_type,
+        ctranslate2_available=ctranslate2_available,
+        cuda_device_count=cuda_device_count,
+        cuda_available=cuda_available,
+        ctranslate2_error=ctranslate2_error,
+    )
 
 
 def _validate_options(*, language: SourceLanguage, beam_size: int) -> None:

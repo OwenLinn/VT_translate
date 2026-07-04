@@ -258,3 +258,24 @@ Electron connects to `OVERLAY_BRIDGE_URL` and does not read API keys.
 
 Use `deepseek-v4-flash` by default for lower latency. Use `deepseek-v4-pro`
 when translation quality is more important than speed.
+
+## Experimental Anime Whisper Model
+
+`models/anime-whisper-ct2-fp16` can be used as an experimental
+faster-whisper-compatible CTranslate2 model for Japanese anime / VTuber-style
+speech testing. It should be passed as a local model path; do not use a
+Transformers pipeline for this model in this project.
+
+Recommended smoke-test settings:
+
+```toml
+[asr]
+backend = "faster-whisper"
+model = "models/anime-whisper-ct2-fp16"
+device = "cuda"
+compute_type = "float16"
+beam_size = 3
+```
+
+The default config remains `models/faster-whisper-large-v3` until the anime
+model has been compared on longer local and livestream audio.

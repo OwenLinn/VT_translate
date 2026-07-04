@@ -531,6 +531,21 @@
   - Corrected the launch script's Electron note so it says Python starts the
     Electron frontend automatically.
   - Removed an unused import from `electron_overlay_bridge.py`.
+- Anime Whisper local audio smoke:
+  - Verified `models\anime-whisper-ct2-fp16` exists locally as a
+    faster-whisper-compatible CTranslate2 model directory.
+  - Added ASR runtime diagnostics for model path, CTranslate2 availability,
+    CUDA device count, requested device/compute type, and CPU fallback status.
+  - Updated `scripts\smoke_asr_file.py` to print the diagnostics before
+    running transcription.
+  - Added `scripts\smoke_audio_translate_file.py` for local audio file ASR plus
+    `echo` or `deepseek` translation, glossary post-processing, latency
+    reporting, and timestamped reports under `runtime_logs\asr_model_tests`.
+  - Added a DeepSeek missing-key preflight so `deepseek` mode fails before
+    loading the ASR model when `DEEPSEEK_API_KEY` is absent.
+  - Added `runtime_logs/` to `.gitignore`.
+  - Updated `docs\04_testing_standard.md` and `docs\07_runtime_config.md` with
+    anime-whisper usage and smoke-test commands.
 
 ### Tests Run
 
@@ -551,6 +566,23 @@
   scriptblock.
 - Current-state check: `.venv\Scripts\pytest.exe` passed with 104 tests.
 - Current-state check: project scan found no pasted `sk-` DeepSeek API key.
+- Anime Whisper check: Python `py_compile` passed for the changed ASR and smoke
+  script files.
+- Anime Whisper check: focused pytest passed with 12 tests.
+- Anime Whisper ASR-only smoke completed on
+  `C:\Users\Owen\Desktop\test_miko_audio.mp3` with CUDA float16, beam 3, no
+  CPU fallback, CTranslate2 CUDA device count 1, 175.09s audio duration, and
+  about 16.8s ASR latency.
+- Anime Whisper ASR + echo translation smoke completed and wrote
+  `runtime_logs\asr_model_tests\anime_whisper_ct2_fp16_test_20260704_121339.txt`.
+- Large-v3 baseline ASR + echo translation smoke completed and wrote
+  `runtime_logs\asr_model_tests\large_v3_baseline_20260704_121449.txt`.
+- DeepSeek missing-key preflight returned a clear error without loading the ASR
+  model.
+- `.venv\Scripts\pytest.exe` passed with 107 tests after anime-whisper smoke
+  tooling.
+- Project scan found no pasted `sk-` DeepSeek API key after anime-whisper smoke
+  tooling.
 
 ### Problems
 
@@ -561,6 +593,11 @@
 - Electron overlay live pipeline has never been end-to-end tested with real
   subtitle output reaching the GUI. The fixes here add robust parsing and
   debug logging so the next live test run will produce actionable output.
+- `DEEPSEEK_API_KEY` was missing from the process environment, so the DeepSeek
+  translation smoke was not run in the anime-whisper pass.
+- Anime-whisper was faster than local large-v3 on the Miko sample, but it
+  produced repeated/hallucinated text in several sections. Large-v3 was slower
+  but substantially more coherent on this sample.
 
 ### Next Steps
 

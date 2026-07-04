@@ -132,6 +132,9 @@ All planned stages complete
 - [x] Harden interactive launch script command execution and Electron npm/node PATH fallback
 - [x] Restore Git executable/repository metadata so Git status and commits can be updated
 - [ ] Refresh shell PATH so `git` works without the full executable path
+- [x] Add anime-whisper-ct2-fp16 local faster-whisper smoke support
+- [x] Add local audio ASR + translation smoke report script
+- [ ] Re-run anime-whisper local audio smoke with DeepSeek translation when an API key is available
 
 ## Discovered 2026-07-02
 

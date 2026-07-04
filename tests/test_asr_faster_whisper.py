@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from yt_live_translator.speech.asr_faster_whisper import ASRError, FasterWhisperTranscriber, transcribe_file
+from yt_live_translator.speech.asr_faster_whisper import (
+    ASRError,
+    FasterWhisperTranscriber,
+    collect_runtime_diagnostics,
+    transcribe_file,
+)
 
 
 @dataclass(frozen=True)
@@ -223,3 +230,26 @@ def test_reusable_transcriber_reports_cpu_fallback_device(tmp_path: Path) -> Non
 def test_missing_audio_file_is_clear(tmp_path: Path) -> None:
     with pytest.raises(ASRError, match="Audio file not found"):
         transcribe_file(tmp_path / "missing.wav", model_factory=FakeWhisperModel)
+
+
+def test_collect_runtime_diagnostics_reports_model_path_and_cuda(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    model_dir = tmp_path / "anime-whisper-ct2-fp16"
+    model_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setitem(
+        sys.modules,
+        "ctranslate2",
+        SimpleNamespace(get_cuda_device_count=lambda: 1),
+    )
+
+    diagnostics = collect_runtime_diagnostics(
+        model_size="anime-whisper-ct2-fp16",
+        device="cuda",
+        compute_type="float16",
+    )
+
+    assert diagnostics.model_path == model_dir
+    assert diagnostics.model_path_exists is True
+    assert diagnostics.ctranslate2_available is True
+    assert diagnostics.cuda_device_count == 1
+    assert diagnostics.cuda_available is True
