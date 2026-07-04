@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+data/
+outputs/
+work/
+models/
+*.wav
+*.sqlite3
+*.jsonl
+config.toml
+frontend/electron-overlay/node_modules/
+frontend/electron-overlay/out/
+frontend/electron-overlay/*.log

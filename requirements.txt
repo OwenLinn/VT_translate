@@ -1,0 +1,14 @@
+PySide6
+pyaudiowpatch
+numpy
+scipy
+soundfile
+faster-whisper
+ctranslate2
+torch
+torchaudio
+openai
+httpx
+pydantic
+tomli-w
+pytest

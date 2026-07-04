@@ -1,0 +1,158 @@
+[app]
+target_language = "zh-TW"
+source_language = "auto"
+mode = "balanced"
+
+[ui]
+overlay_frontend = "qml"
+
+[deepseek]
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-v4-flash"
+base_url = "https://api.deepseek.com"
+timeout_seconds = 10
+
+[asr]
+backend = "faster-whisper"
+model = "models/faster-whisper-large-v3"
+device = "cuda"
+compute_type = "float16"
+beam_size = 3
+
+[audio]
+sample_rate = 16000
+channels = 1
+chunk_ms = 30
+
+[vad]
+threshold = 0.5
+min_speech_ms = 1200
+max_speech_ms = 5000
+silence_end_ms = 700
+padding_ms = 400
+
+[streaming]
+enabled = true
+strategy = "local_agreement"
+asr_tick_ms = 1000
+rolling_window_sec = 8
+overlap_sec = 1.0
+local_agreement_n = 2
+min_commit_sec = 1.2
+max_commit_sec = 3.0
+max_unconfirmed_sec = 4.0
+enable_partial_subtitle = true
+enable_final_revision = true
+
+[streaming.en]
+asr_tick_ms = 800
+min_commit_tokens = 5
+max_commit_sec = 2.5
+silence_end_ms = 350
+
+[streaming.ja]
+asr_tick_ms = 1000
+min_commit_tokens = 8
+max_commit_sec = 3.5
+silence_end_ms = 450
+
+[overlay]
+show_source = true
+show_translation = true
+font_family = "Microsoft JhengHei"
+translation_font_size = 32
+source_font_size = 20
+translation_color = "#FFFFFF"
+source_color = "#DDDDDD"
+background_color = "#000000"
+background_opacity = 0.55
+always_on_top = true
+
+[overlay.glass]
+enabled = true
+corner_radius = 28
+background_opacity = 0.52
+border_opacity = 0.35
+highlight_opacity = 0.28
+shadow_opacity = 0.32
+shadow_blur_radius = 32
+noise_opacity = 0.025
+
+[overlay.animation]
+enabled = true
+fade_duration_ms = 160
+slide_offset_px = 8
+drag_scale = 0.985
+
+[overlay.native_effect]
+enabled = false
+effect = "none"
+
+[qml_overlay]
+width = 900
+height = 96
+x = 200
+y = 80
+always_on_top = true
+frameless = true
+transparent_background = true
+show_settings_icon = true
+
+[qml_overlay.subtitle]
+show_source = true
+show_translation = true
+translation_font_size = 30
+source_font_size = 18
+font_family = "Microsoft JhengHei"
+translation_color = "#FFFFFF"
+source_color = "#D8D8D8"
+text_shadow_opacity = 0.55
+max_translation_lines = 2
+max_source_lines = 1
+
+[qml_overlay.glass]
+enabled = true
+subtitle_background_opacity = 0.58
+card_background_opacity = 0.46
+panel_tint_opacity = 0.32
+corner_radius = 28
+subtitle_corner_radius = 28
+card_corner_radius = 30
+edge_width = 2.0
+edge_opacity = 0.36
+edge_darkening = 0.08
+distortion = 0.018
+reflect_power = 0.28
+border_opacity = 0.36
+highlight_opacity = 0.30
+top_highlight_height = 0.36
+radial_highlight_opacity = 0.18
+shadow_opacity = 0.30
+shadow_radius = 28
+shadow_y_offset = 8
+iridescence_enabled = true
+iridescence_opacity = 0.26
+iridescence_width = 2.0
+rgb_shift = 0.012
+cyan_edge_opacity = 0.22
+magenta_edge_opacity = 0.18
+warm_edge_opacity = 0.12
+noise_opacity = 0.018
+
+[qml_overlay.animation]
+enabled = true
+subtitle_fade_ms = 140
+card_open_ms = 180
+card_close_ms = 130
+popover_open_ms = 160
+popover_close_ms = 120
+slide_offset_px = 12
+scale_from = 0.965
+scale_to = 1.0
+thumb_move_ms = 220
+thumb_stretch_scale = 1.10
+thumb_compress_scale = 0.96
+
+[storage]
+database_path = "data/app.sqlite3"
+subtitle_log_path = "data/subtitle_log.jsonl"

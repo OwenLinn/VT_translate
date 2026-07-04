@@ -1,0 +1,24 @@
+@keyframes softPulse {
+  0%,
+  100% {
+    opacity: 0.56;
+  }
+  50% {
+    opacity: 0.88;
+  }
+}
+
+.subtitle-text--partial {
+  animation: softPulse 1.4s ease-in-out infinite;
+}
+
+button {
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+button:hover {
+  background-color: rgba(255, 255, 255, 0.14);
+}
