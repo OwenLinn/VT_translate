@@ -119,6 +119,42 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Use local_agreement for low-latency streaming subtitles.",
     )
+    parser.add_argument(
+        "--asr-mode",
+        choices=("chunked", "streaming"),
+        default=None,
+        help="ASR mode: chunked (default) or streaming (true continuous ASR).",
+    )
+    parser.add_argument(
+        "--capture-frame-ms",
+        type=int,
+        default=None,
+        help="Duration of each streaming audio frame in ms (default 250).",
+    )
+    parser.add_argument(
+        "--asr-window-seconds",
+        type=float,
+        default=None,
+        help="Rolling ASR window duration in seconds (default 6.0).",
+    )
+    parser.add_argument(
+        "--asr-tick-ms",
+        type=int,
+        default=None,
+        help="ASR tick interval in ms (default 1000).",
+    )
+    parser.add_argument(
+        "--streaming-output-cleanup",
+        action="store_true",
+        default=None,
+        help="Enable overlap trimming and dedup for streaming ASR output (default on).",
+    )
+    parser.add_argument(
+        "--no-streaming-output-cleanup",
+        action="store_true",
+        default=None,
+        help="Disable streaming ASR output cleanup for debug.",
+    )
     parser.add_argument("--deepseek-timeout", type=float, default=None)
     parser.add_argument("--model", default=None)
     parser.add_argument("--device", default=None)
@@ -195,6 +231,11 @@ def main(argv: list[str] | None = None) -> int:
                 max_loopback_chunks=args.max_loopback_chunks,
                 streaming_strategy=args.streaming_strategy
                 or (config.streaming.strategy if config.streaming.enabled else "fixed_segments"),
+                asr_mode=args.asr_mode or "chunked",
+                capture_frame_ms=args.capture_frame_ms or 250,
+                asr_window_seconds=args.asr_window_seconds or 6.0,
+                asr_tick_ms=args.asr_tick_ms or 1000,
+                streaming_output_cleanup=not args.no_streaming_output_cleanup,
             )
             return run_overlay_pipeline_app(config, options)
         except (ConfigError, OverlayError, ValueError) as exc:
@@ -266,6 +307,11 @@ def main(argv: list[str] | None = None) -> int:
                 max_loopback_chunks=args.max_loopback_chunks,
                 streaming_strategy=args.streaming_strategy
                 or (config.streaming.strategy if config.streaming.enabled else "fixed_segments"),
+                asr_mode=args.asr_mode or "chunked",
+                capture_frame_ms=args.capture_frame_ms or 250,
+                asr_window_seconds=args.asr_window_seconds or 6.0,
+                asr_tick_ms=args.asr_tick_ms or 1000,
+                streaming_output_cleanup=not args.no_streaming_output_cleanup,
             )
             return run_electron_overlay_live(config, options)
         except (ConfigError, OverlayError, ValueError) as exc:

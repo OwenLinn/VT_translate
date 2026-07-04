@@ -626,3 +626,24 @@
   `[BridgeSubtitle]` entries and connected client counts.
 - If subtitles still do not appear, the debug logs will pinpoint the exact
   failure point in the Python → WebSocket → main process → IPC → renderer chain.
+
+### True Streaming ASR v1
+
+- Implemented `StreamingAsrSession`: persistent PCM ring buffer (~7s),
+  persistent LocalAgreement, absolute timeline, tick-based ASR over rolling
+  6s window, tick-skip when previous ASR still running, deduplication
+  (8-entry final text deque + prefix comparison for partials).
+- Implemented `stream_loopback_frames()`: 250ms PCM16Audio frame generator
+  from WASAPI loopback via PyAudioWPatch.
+- Implemented `scripts/smoke_streaming_asr_file.py`: local audio file
+  simulation of streaming ASR, prints partial/final events with stats.
+- Added CLI flags and `OverlayPipelineOptions` fields: `--asr-mode`,
+  `--capture-frame-ms`, `--asr-window-seconds`, `--asr-tick-ms`.
+- Wired streaming mode into `_run_continuous_loopback_pipeline`; preserves
+  chunked fallback.
+- Did NOT modify Electron/QML frontend, DeepSeek translation, or glossary.
+
+### Verification
+
+- All 6 files pass `py_compile`.
+- `npm run typecheck` unchanged.

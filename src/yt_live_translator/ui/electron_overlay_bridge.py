@@ -246,6 +246,7 @@ class ElectronOverlayBridge:
                     should_stop=self.stop_requested.is_set,
                     update_status=lambda message: self.broadcast_status_threadsafe("running", True, message),
                     subtitle_log=subtitle_log,
+                    transcriber=transcriber,
                 )
             else:
                 self.broadcast_status_threadsafe("starting", True, "Loading audio")

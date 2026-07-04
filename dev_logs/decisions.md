@@ -162,6 +162,21 @@
   DeepSeek, glossary, subtitle logging, and API keys. Electron main connects as
   a WebSocket client and updates `OverlayWindowManager`; renderers never call
   DeepSeek or read API keys.
+
+## 2026-07-04
+
+- Added True Streaming ASR v1 with persistent ring buffer and persistent
+  LocalAgreement. The streaming mode uses small PCM frames
+  (`capture_frame_ms=250`), runs ASR ticks (`asr_tick_ms=1000`) over a
+  rolling 6-second window (`asr_window_seconds`), and keeps `beam_size=3`
+  for quality. The old chunked loopback pipeline remains available as
+  fallback (`asr_mode="chunked"` or omit the flag).
+- Deduplication: `recent_final_texts: deque(maxlen=8)` suppresses repeated
+  final outputs; prefix comparison prevents redundant partials when content
+  hasn't grown.
+- ASR-only smoke test (`scripts/smoke_streaming_asr_file.py`) uses local
+  audio file slicing to simulate streaming without requiring live audio.
+  Supports both `anime-whisper-ct2-fp16` and `faster-whisper-large-v3`.
 - Electron launch helpers construct a child-process environment with the
   Windows Node.js install directory prepended when `C:\Program Files\nodejs\npm.cmd`
   exists. This makes Python-started Electron modes resilient when the current

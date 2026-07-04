@@ -667,3 +667,204 @@ This file records completed development tasks.
 - Notes:
   - `work\electron_live_debug_cjs_preload_electron.txt` confirms real subtitle
     events reached the subtitle renderer after the CommonJS preload fix.
+
+## 2026-07-04 Streaming ASR Output Cleanup v1
+
+## 2026-07-04 Fragment Translation Guard
+
+## 2026-07-04 Streaming Translation Worker v1
+
+## 2026-07-04 Streaming Translation Worker Hardening v1
+
+## 2026-07-04 Streaming Translation Backpressure v1
+
+- Completed:
+  - **Lag metrics**: `queue_wait_ms`, `translation_call_ms` (renamed),
+    `display_lag_ms`, `queue_depth` logged per task. `display_lag_ms`
+    computed as `(now - session_started) - audio_end_time * 1000`.
+  - **Final queue bounded**: `max_final_queue=2`, oldest final dropped on
+    overflow with `final_dropped_overflow` counter.
+  - **Pre-translate age check**: tasks older than `max_task_age_ms=6000`
+    dropped before API call (`partial_dropped_age` / `final_dropped_age`).
+  - **Post-translate display_lag check**: results with `display_lag_ms >
+    max_display_lag_ms=10000` dropped, including fallbacks.
+  - **Fallback (source==translated) guard**: partial fallbacks always
+    dropped; final fallbacks dropped if display_lag > threshold.
+  - **Partial throttling**: always only latest partial; stale replaced
+    on submit, stale dropped on result, age-dropped before translate.
+  - **session_started_monotonic** passed from overlay pipeline to worker
+    for wall-clock-based lag computation.
+  - New stats: `fallback_dropped`, `partial_dropped_age`,
+    `final_dropped_age`, `final_dropped_overflow`, `final_dropped_lag`.
+  - Stop log includes all aggregated counters.
+  - Did not modify Electron frontend, ASR session, echo mode, or chunked
+    fallback.
+- Tests:
+  - `.venv\Scripts\python.exe -m py_compile` passed for both files.
+- Notes:
+  - Echo mode fully unaffected.
+  - Backpressure params are conservative defaults; can be tuned per
+    `StreamingTranslationWorker` constructor.
+  - Queue depth reported on every submit and result log line.
+
+- Completed:
+  - **Empty translation guard**: worker drops empty/non-stripped translations.
+    For final tasks with source >= 5 CJK chars, falls back to source text
+    with log marker.
+  - **Translation timeout**: translate() runs in a daemon sub-thread with
+    configurable timeout (partial 4s, final 8s). Timeout → partial dropped,
+    final falls back to source if long enough.
+  - **Short fragment guard**: `_is_too_short_for_translation()` skips
+    source_text < 5 CJK chars (Japanese) or < 3 words / 10 chars (English),
+    unless in `JA_TRANSLATION_ALLOW_SHORT` allowlist (はい, いや, あはは,
+    ありがとう, ふふっ, etc.).
+  - **zh-TW style enforcement**:
+    - System prompt strengthened: explicit 繁體字, Taiwan usage examples
+      (影片/透過/品質), preserve interjections.
+    - Lightweight post-process: `_post_process_zh_tw()` replaces 6
+      high-frequency simplified chars (这→這, 边→邊, 转→轉, 场→場,
+      么→麼, 里→裡 in common contexts).
+  - **Duplicate translation suppression**: `_last_emitted_translation`
+    exact-match check, skip and log if identical.
+  - **Enhanced stats logging**: separate counters for empty, timeout, short,
+    fallback, duplicate. Logged at worker stop.
+  - Did not modify Electron frontend, echo mode, or chunked fallback.
+- Tests:
+  - `.venv\Scripts\python.exe -m py_compile` passed for all 3 files.
+- Notes:
+  - Echo mode fully unaffected.
+  - Timeout uses `threading.Thread.join(timeout=x)`, not signal-based.
+  - Short fragment guard is also applied in `submit_partial`/`submit_final`
+    before queueing.
+
+- Completed:
+  - Implemented `StreamingTranslationWorker`
+    (`core/streaming_translation_worker.py`): background thread that
+    decouples ASR event production from DeepSeek translation. Uses
+    `queue.Queue` for final tasks and a generation-tracked mutable slot
+    for the latest partial task.
+  - Partial tasks are superseded via `_partial_generation` counter;
+    stale partial results are dropped without emitting.
+  - Final tasks go through a priority queue and are always processed
+    and emitted.
+  - Stop mechanism drains final queue via sentinel, joins thread with
+    15s timeout.
+  - Integrated worker into `_run_continuous_streaming_asr_pipeline`:
+    - Echo mode: unchanged, translate() called synchronously.
+    - Non-echo mode: `StreamingTranslationWorker` receives
+      `submit_partial`/`submit_final` calls; results come back via
+      `on_result` callback which constructs `StreamingPipelineEvent`.
+  - Fragment guard logic preserved: pending/merge/drop still runs
+    before events are routed to worker.
+  - Added `_make_asr_result_raw()` and updated
+    `_make_translation_result_raw()` with `translation_latency_ms`
+    parameter so worker results carry accurate total latency.
+  - Worker logs submit/replace/done/stale/stats to result log.
+- Tests:
+  - `.venv\Scripts\python.exe -m py_compile` passed for all 4 files.
+  - `npm run typecheck` still passes (frontend unchanged).
+- Notes:
+  - Echo mode behavior is fully preserved for ASR observation.
+  - ASR loop never blocks on DeepSeek latency.
+  - Partial stale detection uses generation counter, not timestamp.
+  - Final tasks drain before worker stops.
+
+- Completed:
+  - Git staged 3 untracked streaming ASR files: `smoke_streaming_asr_file.py`,
+    `loopback_stream.py`, `streaming_asr_session.py`.
+  - Implemented `_is_probable_ja_fragment()`: detects Japanese fragment text
+    (starts with particles/connectives like に、を、が、って、った etc.,
+    or too short after stripping punctuation/whitespace, or < 4 CJK chars).
+  - Added `JA_ALLOW_SHORT` allowlist: はい, いや, あはは, ありがとう etc.
+    are exempt from fragment filtering.
+  - Added `_normalize_fragment_text()`: strips non-CJK/non-kana/ASCII chars
+    for length-based heuristics.
+  - Added `_make_translation_result_raw()`: creates TranslationResult from
+    raw params for merged-fragment translation.
+  - Modified `_run_continuous_streaming_asr_pipeline`:
+    - Echo mode: unchanged, all events emit directly.
+    - Non-echo (DeepSeek) mode: fragment texts are buffered in
+      `pending_text` instead of being sent to translation. Next non-fragment
+      event merges pending + current text before translating.
+    - Flush: merges pending with flush event if non-fragment; drops very
+      short pending (< 6 chars after normalize); emits long pending alone.
+    - Fragment stats (pending/merged/dropped) logged at session end.
+  - Did not modify Electron frontend, DeepSeek provider, ASR session core,
+    or glossary.
+- Tests:
+  - `.venv\Scripts\python.exe -m py_compile` passed for all 5 files.
+  - `npm run typecheck` still passes (frontend unchanged).
+- Notes:
+  - Fragment guard only activates for `--translation deepseek` (or
+    non-echo). `--translation echo` is left untouched.
+  - Output overlap cleanup (`--streaming-output-cleanup`) remains default-on.
+  - Pending fragments are merged by stripping trailing punctuation from
+    pending and concatenating with current text (no forced space/separator
+    for Japanese).
+
+- Completed:
+  - Extended `StreamingAsrEvent` with `raw_source_text`, `overlap_chars`,
+    `skipped`, `skipped_reason` fields for debug visibility.
+  - Added `enable_output_cleanup` parameter to `StreamingAsrSession`
+    (default `True`).
+  - Implemented character-level overlap trimming (`_trim_char_overlap`):
+    finds the longest common suffix of `last_emitted_source_text` and prefix
+    of new text, min 4 Japanese characters. Trims new text to remove the
+    overlap.
+  - Implemented word-level overlap trimming (`_trim_word_overlap`) for
+    English, min 3 words.
+  - `_is_duplicate_final`: also checks cleaned text against recent finals.
+  - `_is_redundant_partial`: also skips if overlap trimming leaves
+    fewer than 3 characters.
+  - Added `--streaming-output-cleanup` / `--no-streaming-output-cleanup`
+    CLI flags (cleanup enabled by default).
+  - Wired `streaming_output_cleanup` through `OverlayPipelineOptions` →
+    `_run_continuous_streaming_asr_pipeline` → `StreamingAsrSession`.
+  - Updated `scripts/smoke_streaming_asr_file.py`: `--no-output-cleanup`
+    flag, prints `raw_source_text` and `overlap_chars` in event output.
+  - Did not modify Electron frontend, DeepSeek translation, or glossary.
+- Tests:
+  - `.venv\Scripts\python.exe -m py_compile` passed for all modified files.
+  - `npm run typecheck` still passes (frontend unchanged).
+- Notes:
+  - Raw ASR text preserved in `event.raw_source_text` for debug logs.
+  - Cleaned text in `event.source_text` goes to translation/subtitles.
+  - Overlap trimming only activates when overlap >= 4 chars (Japanese) or
+    3 words (English), avoiding aggressive truncation.
+
+- Completed:
+  - Implemented `StreamingAsrSession` (`core/streaming_asr_session.py`):
+    persistent PCM ring buffer (~7s), persistent LocalAgreement, absolute
+    timeline, ASR tick scheduler (every `asr_tick_ms` over rolling
+    `asr_window_seconds` window), tick skip when previous ASR still running,
+    final text deduplication (`recent_final_texts: deque[str]`), prefix
+    redundant partial suppression, per-tick temp WAV write/transcribe/cleanup.
+  - Implemented `stream_loopback_frames()` (`audio/loopback_stream.py`):
+    generator yielding ~250ms PCM16Audio frames from WASAPI loopback, using
+    PyAudioWPatch + `convert_pcm16()` for downmixing/resampling, stoppable via
+    `should_stop` callable.
+  - Implemented `scripts/smoke_streaming_asr_file.py`: reads local audio file,
+    slices into 250ms frames, feeds `StreamingAsrSession.push_audio()`,
+    prints ASR partial/final events with timing and stats summary.
+  - Added `OverlayPipelineOptions` fields: `asr_mode`, `capture_frame_ms`,
+    `asr_window_seconds`, `asr_tick_ms`.
+  - Added CLI flags: `--asr-mode` (chunked/streaming), `--capture-frame-ms`,
+    `--asr-window-seconds`, `--asr-tick-ms`.
+  - Wired streaming ASR into `_run_continuous_loopback_pipeline` via new
+    `_run_continuous_streaming_asr_pipeline()` function; preserves chunked
+    fallback when `asr_mode != "streaming"`.
+  - Added `transcriber=transcriber` parameter passing in both call sites
+    (`PipelineWorker.run()` and `ElectronOverlayBridge._run_pipeline()`).
+  - Did not modify Electron frontend, QML frontend, DeepSeek translation
+    logic, glossary, or subtitle log modules.
+- Tests:
+  - `.venv\Scripts\python.exe -m py_compile` passed for all 6 changed/new files.
+  - `npm run typecheck` still passes (frontend unchanged).
+  - ASR-only file smoke test command available for manual testing with
+    `anime-whisper-ct2-fp16` and `faster-whisper-large-v3`.
+- Notes:
+  - Deduplication uses `recent_final_texts: deque(maxlen=8)` to suppress
+    repeated final outputs, plus prefix comparison for redundant partials.
+  - `capture_frame_ms=250`, `asr_window_seconds=6.0`, `asr_tick_ms=1000`,
+    `beam_size=3` match the user's preferred parameters.
+  - The old chunked loopback pipeline remains fully intact as fallback.

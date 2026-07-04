@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -64,6 +65,11 @@ class OverlayPipelineOptions:
     loopback_chunk_seconds: float = 6.0
     max_loopback_chunks: int | None = None
     streaming_strategy: str = "fixed_segments"
+    asr_mode: str = "chunked"
+    capture_frame_ms: int = 250
+    asr_window_seconds: float = 6.0
+    asr_tick_ms: int = 1000
+    streaming_output_cleanup: bool = True
 
 
 def run_overlay_pipeline_app(runtime_config: RuntimeConfig, options: OverlayPipelineOptions) -> int:
@@ -172,6 +178,7 @@ def run_overlay_pipeline_app(runtime_config: RuntimeConfig, options: OverlayPipe
                         should_stop=self.should_stop,
                         update_status=self.status_changed.emit,
                         subtitle_log=subtitle_log,
+                        transcriber=transcriber,
                     )
                 else:
                     self.status_changed.emit("Loading audio")
@@ -457,7 +464,23 @@ def _run_continuous_loopback_pipeline(
     should_stop,
     update_status,
     subtitle_log,
+    transcriber=None,
 ) -> None:
+    if options.asr_mode == "streaming":
+        if transcriber is None:
+            raise ValueError("transcriber is required for streaming ASR mode")
+        _run_continuous_streaming_asr_pipeline(
+            runtime_config=runtime_config,
+            options=options,
+            transcriber=transcriber,
+            translate=translate,
+            on_streaming_event=on_streaming_event,
+            should_stop=should_stop,
+            update_status=update_status,
+            subtitle_log=subtitle_log,
+        )
+        return
+
     if options.loopback_chunk_seconds <= 0:
         raise ValueError("loopback_chunk_seconds must be greater than 0")
     chunk_index = 0
@@ -512,6 +535,343 @@ def _run_continuous_loopback_pipeline(
                 on_output=lambda output, index=chunk_index: on_output(output, index),
                 should_stop=should_stop,
             )
+
+
+def _run_continuous_streaming_asr_pipeline(
+    *,
+    runtime_config,
+    options,
+    transcriber,
+    translate,
+    on_streaming_event,
+    should_stop,
+    update_status,
+    subtitle_log,
+) -> None:
+    from yt_live_translator.audio.loopback_stream import stream_loopback_frames
+    from yt_live_translator.core.streaming_asr_session import StreamingAsrSession
+    from yt_live_translator.speech.streaming_agreement import LocalAgreementConfig
+
+    frame_ms = options.capture_frame_ms
+    asr_window_sec = options.asr_window_seconds
+    asr_tick_ms_val = options.asr_tick_ms
+
+    agreement_config = LocalAgreementConfig(
+        source_language=options.source_language,
+        agreement_n=2,
+        min_commit_sec=1.2,
+        max_commit_sec=3.0,
+        max_unconfirmed_sec=4.0,
+        min_commit_tokens=8 if options.source_language == "ja" else 5,
+        enable_partial_subtitle=True,
+        enable_final_revision=False,
+    )
+
+    session = StreamingAsrSession(
+        transcriber=transcriber,
+        source_language=options.source_language,
+        sample_rate=runtime_config.audio.sample_rate,
+        channels=runtime_config.audio.channels,
+        asr_window_seconds=asr_window_sec,
+        asr_tick_ms=asr_tick_ms_val,
+        capture_frame_ms=frame_ms,
+        agreement_config=agreement_config,
+        beam_size=options.beam_size,
+        enable_output_cleanup=options.streaming_output_cleanup,
+    )
+
+    update_status("Starting true streaming ASR pipeline")
+    _append_result_log(options, "[Status] True streaming ASR pipeline started")
+
+    from yt_live_translator.core.subtitle_pipeline import StreamingPipelineEvent
+    from yt_live_translator.core.streaming_translation_worker import (
+        StreamingTranslationResult,
+        StreamingTranslationWorker,
+    )
+
+    is_echo = options.translation_mode == "echo"
+    translation_worker: StreamingTranslationWorker | None = None
+
+    if is_echo:
+
+        def _emit_translated(evt, merged_text: str | None = None) -> None:
+            source = merged_text if merged_text is not None else evt.source_text
+            translated = translate(source, options.source_language, options.target_language)
+            pipe_event = StreamingPipelineEvent(
+                kind=evt.kind,
+                asr=_make_asr_result(evt, options.source_language),
+                translation=_make_translation_result_raw(
+                    segment_id=evt.segment_id,
+                    source_text=source,
+                    translated_text=translated,
+                    options=options,
+                ),
+            )
+            on_streaming_event(pipe_event, None, subtitle_log)
+    else:
+        def _on_worker_result(result: StreamingTranslationResult) -> None:
+            pipe_event = StreamingPipelineEvent(
+                kind=result.kind,
+                asr=_make_asr_result_raw(
+                    segment_id=result.segment_id,
+                    source_text=result.source_text,
+                    source_language=result.source_language,
+                    start_time=result.start_time,
+                    end_time=result.end_time,
+                    asr_latency_ms=result.asr_latency_ms,
+                ),
+                translation=_make_translation_result_raw(
+                    segment_id=result.segment_id,
+                    source_text=result.source_text,
+                    translated_text=result.translated_text,
+                    options=options,
+                    translation_latency_ms=result.translation_latency_ms,
+                ),
+            )
+            on_streaming_event(pipe_event, None, subtitle_log)
+
+        translation_worker = StreamingTranslationWorker(
+            translate=translate,
+            on_result=_on_worker_result,
+            source_language=options.source_language,
+            target_language=options.target_language,
+            session_started_monotonic=time.monotonic(),
+            update_status=update_status,
+            append_log=lambda msg: _append_result_log(options, msg),
+        )
+        translation_worker.start()
+
+    pending_text: str | None = None
+    pending_start: float | None = None
+    fragment_stats = {"pending": 0, "merged": 0, "dropped": 0}
+
+    def _maybe_emit(evt, merged_text: str | None = None) -> None:
+        if is_echo:
+            _emit_translated(evt, merged_text)
+            return
+        source = merged_text if merged_text is not None else evt.source_text
+        if evt.kind == "final":
+            translation_worker.submit_final(
+                segment_id=evt.segment_id,
+                source_text=source,
+                asr_latency_ms=evt.asr_latency_ms,
+                start_time=evt.start_time,
+                end_time=evt.end_time,
+            )
+        else:
+            translation_worker.submit_partial(
+                segment_id=evt.segment_id,
+                source_text=source,
+                asr_latency_ms=evt.asr_latency_ms,
+                start_time=evt.start_time,
+                end_time=evt.end_time,
+            )
+
+    for frame in stream_loopback_frames(
+        frame_ms=frame_ms,
+        sample_rate=runtime_config.audio.sample_rate,
+        channels=runtime_config.audio.channels,
+        should_stop=should_stop,
+    ):
+        events = session.push_audio(frame)
+
+        for event in events:
+            source = event.source_text
+
+            if is_echo:
+                _emit_translated(event)
+                continue
+
+            if options.source_language == "ja" and _is_probable_ja_fragment(source):
+                if pending_text:
+                    pending_text = pending_text.rstrip("\u2026\u3001\u3002 ") + source
+                    fragment_stats["pending"] += 1
+                    _append_result_log(
+                        options,
+                        f"[streaming-fragment] merge pending fragment: + "
+                        f'"{source[:40]}"',
+                    )
+                else:
+                    pending_text = source
+                    pending_start = event.start_time
+                    fragment_stats["pending"] += 1
+                    _append_result_log(
+                        options,
+                        f'[streaming-fragment] pending fragment: "{source[:60]}"',
+                    )
+                continue
+
+            if pending_text:
+                translation_source = pending_text.rstrip("\u2026\u3001\u3002 ") + source
+                _append_result_log(
+                    options,
+                    f'[streaming-fragment] emit merged: pending="{pending_text[:40]}" '
+                    f'+ current="{source[:40]}"',
+                )
+                _maybe_emit(event, merged_text=translation_source)
+                pending_text = None
+                pending_start = None
+                fragment_stats["merged"] += 1
+            else:
+                _maybe_emit(event)
+
+    flush_events = session.flush()
+    for event in flush_events:
+        if is_echo:
+            _emit_translated(event)
+            continue
+
+        if pending_text and not _is_probable_ja_fragment(pending_text):
+            flush_source = pending_text.rstrip("\u2026\u3001\u3002 ") + event.source_text
+            _append_result_log(
+                options,
+                f'[streaming-fragment] flush merged: pending="{pending_text[:40]}" '
+                f'+ flush="{event.source_text[:40]}"',
+            )
+            _maybe_emit(event, merged_text=flush_source)
+            fragment_stats["merged"] += 1
+        elif pending_text:
+            norm = _normalize_fragment_text(pending_text)
+            if len(norm) >= 6:
+                _append_result_log(
+                    options,
+                    f'[streaming-fragment] flush long pending: "{pending_text[:60]}"',
+                )
+                _maybe_emit(event, merged_text=pending_text)
+                fragment_stats["merged"] += 1
+            else:
+                _append_result_log(
+                    options,
+                    f'[streaming-fragment] drop tiny pending: "{pending_text[:60]}"',
+                )
+                fragment_stats["dropped"] += 1
+                _maybe_emit(event)
+        else:
+            _maybe_emit(event)
+        pending_text = None
+        pending_start = None
+
+    if translation_worker is not None:
+        translation_worker.stop(drain_final=True)
+        _append_result_log(
+            options,
+            f"[streaming-fragment] stats pending={fragment_stats['pending']} "
+            f"merged={fragment_stats['merged']} dropped={fragment_stats['dropped']}",
+        )
+
+    _append_result_log(options, "[Status] True streaming ASR pipeline finished")
+
+
+def _make_asr_result(event, source_language: str) -> "ASRResult":
+    from yt_live_translator.core.models import ASRResult
+
+    return ASRResult(
+        segment_id=event.segment_id,
+        source_text=event.source_text,
+        source_language=source_language,
+        start_time=event.start_time,
+        end_time=event.end_time,
+        asr_latency_ms=event.asr_latency_ms,
+    )
+
+
+def _make_asr_result_raw(
+    *,
+    segment_id: int,
+    source_text: str,
+    source_language: str,
+    start_time: float,
+    end_time: float,
+    asr_latency_ms: float,
+) -> "ASRResult":
+    from yt_live_translator.core.models import ASRResult
+
+    return ASRResult(
+        segment_id=segment_id,
+        source_text=source_text,
+        source_language=source_language,
+        start_time=start_time,
+        end_time=end_time,
+        asr_latency_ms=asr_latency_ms,
+    )
+
+
+def _make_translation_result(event, translated_text: str, options) -> "TranslationResult":
+    from yt_live_translator.core.models import TranslationResult
+
+    return TranslationResult(
+        segment_id=event.segment_id,
+        source_text=event.source_text,
+        translated_text=translated_text,
+        source_language=options.source_language,
+        target_language=options.target_language,
+        total_latency_ms=event.asr_latency_ms,
+    )
+
+
+def _make_translation_result_raw(
+    *,
+    segment_id: int,
+    source_text: str,
+    translated_text: str,
+    options,
+    translation_latency_ms: float = 0.0,
+) -> "TranslationResult":
+    from yt_live_translator.core.models import TranslationResult
+
+    return TranslationResult(
+        segment_id=segment_id,
+        source_text=source_text,
+        translated_text=translated_text,
+        source_language=options.source_language,
+        target_language=options.target_language,
+        total_latency_ms=translation_latency_ms,
+    )
+
+
+JA_ALLOW_SHORT = frozenset(("はい", "いや", "え？", "え?", "あはは", "ありがとう", "うん", "うん。", "ええ", "そう", "はい。"))
+
+
+def _normalize_fragment_text(text: str) -> str:
+    result: list[str] = []
+    for ch in text:
+        cp = ord(ch)
+        if (
+            0x4E00 <= cp <= 0x9FFF
+            or 0x3040 <= cp <= 0x309F
+            or 0x30A0 <= cp <= 0x30FF
+            or 0x0020 <= cp <= 0x007E
+        ):
+            result.append(ch)
+    return "".join(result)
+
+
+def _is_probable_ja_fragment(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+
+    if stripped in JA_ALLOW_SHORT:
+        return False
+
+    norm = _normalize_fragment_text(stripped)
+    if len(norm) < 4:
+        return True
+
+    fragment_prefixes = (
+        "に、", "を、", "が、", "は、", "も、", "と、", "で、",
+        "って", "った", "たこと", "いらなかった", "くらいに", "ってきて",
+    )
+    for prefix in fragment_prefixes:
+        if stripped.startswith(prefix):
+            return True
+
+    if len(stripped) < 18:
+        short_starts = ("に", "を", "が", "は", "も", "と", "で", "って", "った")
+        if stripped.startswith(short_starts) and norm not in JA_ALLOW_SHORT:
+            return True
+
+    return False
 
 
 def _load_audio(runtime_config: RuntimeConfig, options: OverlayPipelineOptions):

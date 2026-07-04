@@ -128,7 +128,8 @@ All planned stages complete
 - [x] Add debug logging across WebSocket → main process → IPC → renderer chain
 - [x] Add robust WebSocket message parsing (string/ArrayBuffer/Buffer)
 - [x] Add Python bridge client-connect pipeline status sync
-
+- [x] True Streaming ASR v1: StreamingAsrSession + loopback_stream + smoke test
+- [x] Wire streaming ASR mode into live continuous pipeline
 - [x] Harden interactive launch script command execution and Electron npm/node PATH fallback
 - [x] Restore Git executable/repository metadata so Git status and commits can be updated
 - [ ] Refresh shell PATH so `git` works without the full executable path
@@ -140,6 +141,9 @@ All planned stages complete
 - [x] Re-test Electron live subtitle display with bridge result-log diagnostics
 - [x] Fix Electron preload IPC path so renderer receives live subtitle state
 - [x] Skip all-silence fallback chunks in continuous live capture
+- [ ] ASR-only file smoke test with anime-whisper-ct2-fp16
+- [ ] ASR-only file smoke test with faster-whisper-large-v3
+- [ ] Live echo mode smoke test with streaming ASR
 
 ## Discovered 2026-07-02
 
