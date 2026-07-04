@@ -12,6 +12,7 @@ import type {
   SettingSelectedPayload
 } from "../../shared/overlayIpcTypes";
 import { OVERLAY_IPC } from "../../shared/overlayIpcTypes";
+import { appendDebugLog } from "../debugLog";
 import { createControlCardWindow } from "./controlCardWindow";
 import { createPopoverWindow } from "./popoverWindow";
 import { createSettingsIconWindow } from "./settingsIconWindow";
@@ -129,6 +130,10 @@ export class OverlayWindowManager {
       console.log(
         `[manager] subtitle ${event.kind} seg=${event.segmentId} src="${event.source.slice(0, 40)}" tr="${event.translation.slice(0, 40)}" latency=${event.latencyMs}ms`
       );
+      appendDebugLog(
+        "manager",
+        `subtitle kind=${event.kind} seg=${event.segmentId} sourceChars=${event.source.length} translationChars=${event.translation.length} latency=${event.latencyMs}ms`
+      );
       this.patchState({
         backendConnected: true,
         runtimeStatus: "running",
@@ -149,6 +154,10 @@ export class OverlayWindowManager {
       console.log(
         `[manager] status status=${event.status} connected=${event.backendConnected} detail="${event.detail ?? ""}"`
       );
+      appendDebugLog(
+        "manager",
+        `status status=${event.status} connected=${event.backendConnected} detail="${event.detail ?? ""}"`
+      );
       this.patchState({
         backendConnected: event.backendConnected,
         runtimeStatus: event.status,
@@ -158,6 +167,10 @@ export class OverlayWindowManager {
     }
     console.log(
       `[manager] settings srcLang=${event.sourceLang ?? "-"} tgtLang=${event.targetLang ?? "-"} model=${event.translationModel ?? "-"}`
+    );
+    appendDebugLog(
+      "manager",
+      `settings srcLang=${event.sourceLang ?? "-"} tgtLang=${event.targetLang ?? "-"} model=${event.translationModel ?? "-"}`
     );
     this.patchState({
       sourceLanguage: event.sourceLang ?? this.state.sourceLanguage,
@@ -311,6 +324,10 @@ export class OverlayWindowManager {
       ...this.state,
       ...patch
     };
+    appendDebugLog(
+      "manager",
+      `patchState status=${this.state.runtimeStatus} subtitleSeg=${this.state.subtitle.segmentId} translatedChars=${this.state.subtitle.translatedText.length}`
+    );
     this.broadcastState();
   }
 
@@ -376,6 +393,7 @@ export class OverlayWindowManager {
         win.webContents.send(channel, payload);
       }
     }
+    appendDebugLog("manager", `broadcast channel=${channel} windows=${Object.keys(this.windows).length}`);
   }
 }
 

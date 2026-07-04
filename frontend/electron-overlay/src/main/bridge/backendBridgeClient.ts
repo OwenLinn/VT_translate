@@ -1,5 +1,6 @@
 import { WebSocket } from "ws";
 import type { BackendEvent, CommandMessage, CommandName } from "../../shared/backendBridgeTypes";
+import { appendDebugLog } from "../debugLog";
 
 export interface BackendBridgeClient {
   sendCommand: (command: CommandName, value?: string | boolean) => boolean;
@@ -47,6 +48,7 @@ export function createBackendBridgeClient(
 
     socket.addEventListener("open", () => {
       console.log("[bridge] connected to backend");
+      appendDebugLog("bridge", "connected to backend");
       reconnectAttempt = 0;
       onConnectionChange(true);
     });
@@ -61,18 +63,22 @@ export function createBackendBridgeClient(
       try {
         const event = JSON.parse(raw) as BackendEvent;
         console.log(`[bridge] recv event: type=${event.type}`);
+        appendDebugLog("bridge", `recv event type=${event.type}`);
         onEvent(event);
       } catch (error) {
         console.error(`[bridge] failed to parse event: ${String(error)}, raw=${raw.slice(0, 200)}`);
+        appendDebugLog("bridge", `parse failed error=${String(error)} raw=${raw.slice(0, 200)}`);
       }
     });
     socket.addEventListener("close", (event) => {
       console.log(`[bridge] disconnected (code=${event.code})`);
+      appendDebugLog("bridge", `disconnected code=${event.code}`);
       onConnectionChange(false);
       scheduleReconnect();
     });
     socket.addEventListener("error", (error) => {
       console.error("[bridge] WebSocket error:", error);
+      appendDebugLog("bridge", `websocket error=${String(error)}`);
       onConnectionChange(false, "Backend WebSocket error");
     });
   };
@@ -81,9 +87,10 @@ export function createBackendBridgeClient(
     if (closed || reconnectTimer) {
       return;
     }
-    const delay = Math.min(1000 * Math.pow(2, Math.min(reconnectAttempt, 5)), 10000);
-    console.log(`[bridge] reconnecting in ${delay}ms (attempt ${reconnectAttempt})`);
-    reconnectTimer = setTimeout(() => {
+      const delay = Math.min(1000 * Math.pow(2, Math.min(reconnectAttempt, 5)), 10000);
+      console.log(`[bridge] reconnecting in ${delay}ms (attempt ${reconnectAttempt})`);
+      appendDebugLog("bridge", `reconnecting delay=${delay}ms attempt=${reconnectAttempt}`);
+      reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       connect();
     }, delay);
@@ -103,6 +110,7 @@ export function createBackendBridgeClient(
         requestId: `${Date.now()}-${Math.random().toString(16).slice(2)}`
       };
       socket.send(JSON.stringify(message));
+      appendDebugLog("bridge", `sent command=${command}`);
       return true;
     },
     close: () => {

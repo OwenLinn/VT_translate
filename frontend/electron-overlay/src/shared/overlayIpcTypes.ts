@@ -68,6 +68,7 @@ export interface OverlayRendererApi {
   closePopover: () => Promise<OverlayUiState>;
   escape: () => Promise<OverlayUiState>;
   settingSelected: (payload: SettingSelectedPayload) => Promise<OverlayUiState>;
+  debugLog: (message: string) => Promise<boolean>;
   onStateUpdated: (callback: (state: OverlayUiState) => void) => () => void;
   onPositionUpdated: (callback: (positions: OverlayPositionSnapshot) => void) => () => void;
 }
@@ -87,6 +88,7 @@ export const OVERLAY_IPC = {
   dragEnd: "overlay:drag-end",
   escape: "overlay:escape",
   settingSelected: "overlay:setting-selected",
+  debugLog: "overlay:debug-log",
   stateUpdated: "overlay:state-updated",
   popoverContent: "overlay:popover-content",
   positionUpdated: "overlay:position-updated",

@@ -546,6 +546,12 @@
   - Added `runtime_logs/` to `.gitignore`.
   - Updated `docs\04_testing_standard.md` and `docs\07_runtime_config.md` with
     anime-whisper usage and smoke-test commands.
+- Electron live overlay diagnostics:
+  - Added bridge-side status/subtitle result-log instrumentation for Electron
+    live mode, including connected client count and subtitle metadata.
+  - Added ASCII-safe console diagnostics for bridge events so PowerShell logs
+    remain readable when subtitle text contains Japanese/Chinese characters.
+  - Set UTF-8 console and Python IO environment variables in `launch.ps1`.
 
 ### Tests Run
 
@@ -583,6 +589,17 @@
   tooling.
 - Project scan found no pasted `sk-` DeepSeek API key after anime-whisper smoke
   tooling.
+- Electron live diagnostics: `.venv\Scripts\python.exe -m py_compile src\yt_live_translator\ui\electron_overlay_bridge.py`
+  passed.
+- Electron live diagnostics: `launch.ps1` parsed successfully as a PowerShell
+  scriptblock.
+- Electron live diagnostics: `.venv\Scripts\pytest.exe tests\test_electron_overlay.py`
+  passed with 16 tests.
+- Electron live diagnostics: `npm run typecheck` passed after the test process
+  prepended `C:\Program Files\nodejs` to PATH.
+- Electron live diagnostics: `.venv\Scripts\pytest.exe` passed with 107 tests.
+- Electron live diagnostics: project scan found no pasted `sk-` DeepSeek API
+  key.
 
 ### Problems
 
@@ -598,9 +615,14 @@
 - Anime-whisper was faster than local large-v3 on the Miko sample, but it
   produced repeated/hallucinated text in several sections. Large-v3 was slower
   but substantially more coherent on this sample.
+- Electron live overlay still needs a manual live re-test after the new bridge
+  result-log instrumentation. The result log will show whether subtitle events
+  have `clients=0` or are reaching Electron.
 
 ### Next Steps
 
 - Run a live end-to-end test and inspect the debug console output.
+- Inspect `work\electron_live_debug_latest.txt` after the next live run for
+  `[BridgeSubtitle]` entries and connected client counts.
 - If subtitles still do not appear, the debug logs will pinpoint the exact
   failure point in the Python → WebSocket → main process → IPC → renderer chain.

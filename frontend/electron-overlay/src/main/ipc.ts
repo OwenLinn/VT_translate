@@ -1,6 +1,7 @@
 import { BrowserWindow, clipboard, ipcMain } from "electron";
 import type { OpenPopoverPayload, SettingSelectedPayload } from "../shared/overlayIpcTypes";
 import { OVERLAY_IPC } from "../shared/overlayIpcTypes";
+import { appendDebugLog } from "./debugLog";
 import type { OverlayWindowManager } from "./windows/overlayWindowManager";
 
 type WindowGetter = () => BrowserWindow | null;
@@ -19,6 +20,10 @@ export function registerLegacyOverlayIpc(getWindow: WindowGetter): void {
     clipboard.writeText(text);
     return true;
   });
+  ipcMain.handle(OVERLAY_IPC.debugLog, (_event, message: string) => {
+    appendDebugLog("renderer", message);
+    return true;
+  });
 }
 
 export function registerOverlayManagerIpc(manager: OverlayWindowManager): void {
@@ -27,6 +32,10 @@ export function registerOverlayManagerIpc(manager: OverlayWindowManager): void {
   );
   ipcMain.handle(OVERLAY_IPC.copyText, (_event, text: string) => {
     clipboard.writeText(text);
+    return true;
+  });
+  ipcMain.handle(OVERLAY_IPC.debugLog, (_event, message: string) => {
+    appendDebugLog("renderer", message);
     return true;
   });
   ipcMain.handle(OVERLAY_IPC.getState, () => manager.getState());

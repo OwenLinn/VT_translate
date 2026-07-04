@@ -22,6 +22,7 @@ const api: OverlayRendererApi = {
   escape: (): Promise<OverlayUiState> => ipcRenderer.invoke(OVERLAY_IPC.escape),
   settingSelected: (payload: SettingSelectedPayload): Promise<OverlayUiState> =>
     ipcRenderer.invoke(OVERLAY_IPC.settingSelected, payload),
+  debugLog: (message: string): Promise<boolean> => ipcRenderer.invoke(OVERLAY_IPC.debugLog, message),
   onStateUpdated: (callback: (state: OverlayUiState) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: OverlayUiState): void => callback(state);
     ipcRenderer.on(OVERLAY_IPC.stateUpdated, listener);

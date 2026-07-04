@@ -602,3 +602,68 @@ This file records completed development tasks.
   - On the local Miko test audio, anime-whisper was faster than local large-v3
     but produced repeated/hallucinated text in several sections. Large-v3 was
     slower but much more coherent on this sample.
+
+## 2026-07-04 Electron Live Overlay Diagnostics
+
+- Completed:
+  - Added bridge-side result-log instrumentation for Electron live status and
+    subtitle broadcasts, including connected client count, segment id,
+    source/translation character counts, and latency.
+  - Added ASCII-safe console diagnostics for bridge status/subtitle events so
+    PowerShell output remains readable even when CJK subtitle text would render
+    as mojibake.
+  - Hardened `launch.ps1` startup encoding by switching the console to UTF-8
+    and setting `PYTHONUTF8=1` plus `PYTHONIOENCODING=utf-8` for the launched
+    Python process.
+- Tests:
+  - `.venv\Scripts\python.exe -m py_compile src\yt_live_translator\ui\electron_overlay_bridge.py`
+    passed.
+  - `launch.ps1` parsed successfully as a PowerShell scriptblock.
+  - `.venv\Scripts\pytest.exe tests\test_electron_overlay.py` passed with 16
+    tests.
+  - `npm run typecheck` passed after prepending `C:\Program Files\nodejs` to
+    the test process PATH.
+  - `.venv\Scripts\pytest.exe` passed with 107 tests.
+  - Project scan found no pasted `sk-` DeepSeek API key.
+- Notes:
+  - The next live run should inspect `--overlay-result-log` for
+    `[BridgeSubtitle] clients=...` entries. `clients=0` means Electron did not
+    connect to the Python bridge; `clients>0` means the subtitle reached the
+    WebSocket bridge and the remaining issue is in Electron main/IPC/renderer
+    display.
+
+## 2026-07-04 Electron Live Overlay Subtitle Display Fix
+
+- Completed:
+  - Fixed the Electron multi-window preload path and build output by compiling
+    preload as CommonJS `preload.cjs` and loading that file from every
+    BrowserWindow.
+  - Confirmed the previous visible mock subtitle was the renderer store's
+    initial state; renderer windows were not receiving the preload IPC API, so
+    main-process state broadcasts could not update the subtitle window.
+  - Kept renderer security settings intact: `nodeIntegration: false`,
+    `contextIsolation: true`, and `sandbox: true`.
+  - Added Electron frontend debug logging across backend WebSocket receive,
+    manager state patch/broadcast, and renderer state subscription.
+  - Changed Electron live launcher lifetime so the Python bridge remains alive
+    until manual shutdown instead of being tied to short-lived frontend command
+    behavior.
+  - Skipped all-silence WASAPI fallback chunks in continuous live capture so
+    empty startup chunks are not sent to GPU ASR.
+  - Hardened subtitle-window CSS so the live subtitle card/content fills the
+    transparent BrowserWindow and wraps long text.
+- Tests:
+  - `npm run typecheck` passed.
+  - `npm run lint` passed.
+  - `npm run build` passed and generated `out\preload\preload.cjs`.
+  - `.venv\Scripts\pytest.exe tests\test_overlay_pipeline_app.py tests\test_electron_overlay.py`
+    passed with 22 tests.
+  - `.venv\Scripts\pytest.exe` passed with 108 tests.
+  - Project scan found no pasted `sk-` DeepSeek API key.
+  - Live Electron run with CUDA large-v3 and DeepSeek showed
+    `[BridgeSubtitle] clients=1` in the Python bridge log and
+    `renderer subtitle stateUpdated ... translatedChars=...` in the Electron
+    frontend log.
+- Notes:
+  - `work\electron_live_debug_cjs_preload_electron.txt` confirms real subtitle
+    events reached the subtitle renderer after the CommonJS preload fix.

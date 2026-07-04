@@ -177,3 +177,8 @@
 - Local ASR model comparison reports are generated under
   `runtime_logs/asr_model_tests/` and are ignored by Git because they are
   machine/test-run artifacts.
+- Electron live subtitle display debugging uses the Python WebSocket bridge as
+  the first observable boundary. When `--overlay-result-log` is supplied, the
+  bridge records status/subtitle broadcast metadata and connected client count,
+  while console output keeps subtitle details ASCII-safe to avoid PowerShell
+  mojibake hiding the event flow.

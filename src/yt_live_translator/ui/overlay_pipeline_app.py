@@ -487,6 +487,11 @@ def _run_continuous_loopback_pipeline(
         )
         if should_stop():
             break
+        if audio.captured_frames <= 0:
+            message = f"Skipping silent live audio chunk {chunk_index}"
+            update_status(message)
+            _append_result_log(options, f"[Status] {message}")
+            continue
         update_status(f"Processing live audio chunk {chunk_index}")
         _append_result_log(options, f"[Status] Processing live audio chunk {chunk_index}")
         if options.streaming_strategy == "local_agreement":

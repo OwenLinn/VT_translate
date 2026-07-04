@@ -135,6 +135,11 @@ All planned stages complete
 - [x] Add anime-whisper-ct2-fp16 local faster-whisper smoke support
 - [x] Add local audio ASR + translation smoke report script
 - [ ] Re-run anime-whisper local audio smoke with DeepSeek translation when an API key is available
+- [x] Add Electron bridge result-log instrumentation for live subtitle/status broadcasts
+- [x] Force UTF-8 console/Python encoding in the interactive launch script
+- [x] Re-test Electron live subtitle display with bridge result-log diagnostics
+- [x] Fix Electron preload IPC path so renderer receives live subtitle state
+- [x] Skip all-silence fallback chunks in continuous live capture
 
 ## Discovered 2026-07-02
 

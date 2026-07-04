@@ -35,6 +35,10 @@ function readWindowType(): OverlayWindowType | "single" {
   return "single";
 }
 
+function debugLog(message: string): void {
+  void window.electronOverlay?.debugLog?.(message).catch(() => undefined);
+}
+
 export function App(): JSX.Element {
   const mode = useMemo(readMode, []);
   const windowType = useMemo(readWindowType, []);
@@ -96,11 +100,15 @@ function MultiWindowApp({
     let cleanupState = (): void => undefined;
     let cleanupPosition = (): void => undefined;
     console.log(`[renderer:${windowType}] mounting, requesting initial state`);
+    debugLog(`${windowType} mounting`);
     window.electronOverlay
       ?.getState()
       .then((state) => {
         console.log(
           `[renderer:${windowType}] got initial state: status=${state.runtimeStatus} connected=${state.backendConnected} controlOpen=${state.showControlCard}`
+        );
+        debugLog(
+          `${windowType} initial state status=${state.runtimeStatus} connected=${state.backendConnected} seg=${state.subtitle.segmentId} translatedChars=${state.subtitle.translatedText.length}`
         );
         applyUiState(state);
       })
@@ -109,6 +117,9 @@ function MultiWindowApp({
       window.electronOverlay?.onStateUpdated((state) => {
         console.log(
           `[renderer:${windowType}] stateUpdated: status=${state.runtimeStatus} subtitle="${state.subtitle.translatedText.slice(0, 40)}"`
+        );
+        debugLog(
+          `${windowType} stateUpdated status=${state.runtimeStatus} seg=${state.subtitle.segmentId} translatedChars=${state.subtitle.translatedText.length}`
         );
         applyUiState(state);
       }) ?? cleanupState;
@@ -174,6 +185,7 @@ function MultiWindowApp({
           open={controlOpen}
           onClick={() => {
             console.log("[renderer:settings-icon] toggleControlCard clicked");
+            debugLog("settings-icon toggleControlCard clicked");
             window.electronOverlay
               ?.toggleControlCard()
               .then((state) => {

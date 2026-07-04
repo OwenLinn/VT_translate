@@ -46,6 +46,11 @@ This file records unresolved bugs, risks, and technical problems.
   VTuber/anime-style audio.
 - The anime-whisper DeepSeek translation smoke was not run because
   `DEEPSEEK_API_KEY` was not present in the process environment.
+- Electron live overlay subtitle display still needs a manual live re-test with
+  the new bridge result-log diagnostics. If `[BridgeSubtitle]` entries show
+  `clients=0`, Electron is not connected to Python; if `clients>0`, the
+  remaining bug is in Electron main process state, IPC, renderer state, or
+  transparent-window rendering.
 
 ## Resolved Issues
 

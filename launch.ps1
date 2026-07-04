@@ -4,6 +4,13 @@
 $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location -LiteralPath $projectDir
 
+chcp 65001 | Out-Null
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  YouTube Live Translator Overlay" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan

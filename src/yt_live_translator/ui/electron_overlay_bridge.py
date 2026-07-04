@@ -367,6 +367,15 @@ class ElectronOverlayBridge:
         ).audio
 
     def broadcast_status_threadsafe(self, status: str, connected: bool, detail: str | None = None) -> None:
+        _append_result_log(
+            self.options,
+            f"[BridgeStatus] status={status} connected={connected} clients={len(self.clients)} detail={detail or ''}",
+        )
+        print(
+            "[bridge] status "
+            f"status={status} connected={connected} clients={len(self.clients)} detail={_ascii_safe(detail or '')}",
+            flush=True,
+        )
         self._submit_broadcast(
             {
                 "type": "status",
@@ -397,6 +406,23 @@ class ElectronOverlayBridge:
         target_lang: str,
         latency_ms: float,
     ) -> None:
+        _append_result_log(
+            self.options,
+            "\n".join(
+                [
+                    f"[BridgeSubtitle] kind={kind} segment={segment_id} clients={len(self.clients)} "
+                    f"source_chars={len(source)} translation_chars={len(translation)} latency={latency_ms:.0f} ms",
+                    f"Source: {source}",
+                    f"Translation: {translation}",
+                ]
+            ),
+        )
+        print(
+            "[bridge] subtitle "
+            f"kind={kind} segment={segment_id} clients={len(self.clients)} "
+            f"source_chars={len(source)} translation_chars={len(translation)} latency={latency_ms:.0f}ms",
+            flush=True,
+        )
         self._submit_broadcast(
             {
                 "type": "subtitle",
@@ -509,6 +535,10 @@ def _encode_text_frame(text: str) -> bytes:
     return header + payload
 
 
+def _ascii_safe(text: str) -> str:
+    return text.encode("ascii", errors="backslashreplace").decode("ascii")
+
+
 def run_electron_overlay_live(runtime_config: RuntimeConfig, options: OverlayPipelineOptions) -> int:
     root = electron_overlay_root()
     package_json = root / "package.json"
@@ -542,9 +572,34 @@ def run_electron_overlay_live(runtime_config: RuntimeConfig, options: OverlayPip
     env["OVERLAY_BRIDGE_MODE"] = "live"
     env["OVERLAY_BRIDGE_URL"] = BRIDGE_URL
     env.setdefault("OVERLAY_WINDOW_MODE", "multi")
+    if options.result_log:
+        result_log_path = Path(options.result_log)
+        if not result_log_path.is_absolute():
+            result_log_path = Path.cwd() / result_log_path
+        suffix = result_log_path.suffix or ".txt"
+        frontend_log = result_log_path.with_name(f"{result_log_path.stem}_electron{suffix}")
+        env["OVERLAY_FRONTEND_DEBUG_LOG"] = str(frontend_log)
+    process: subprocess.Popen[bytes] | None = None
+    frontend_exit_code: int | None = None
     try:
-        return subprocess.call([resolve_npm_command(), "run", "dev:live"], cwd=root, env=env)
+        process = subprocess.Popen([resolve_npm_command(), "run", "dev:live"], cwd=root, env=env)
+        _append_result_log(options, "Electron frontend command launched; bridge lifetime is tied to Python process")
+        while True:
+            exit_code = process.poll()
+            if exit_code is not None and frontend_exit_code is None:
+                frontend_exit_code = exit_code
+                message = (
+                    f"Electron frontend command exited with code {exit_code}; "
+                    "keeping Python bridge alive until manual shutdown"
+                )
+                print(f"[bridge] {message}", flush=True)
+                _append_result_log(options, message)
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        return 130
     except FileNotFoundError as exc:
         raise OverlayError("npm is required to run the Electron overlay frontend") from exc
     finally:
+        if process is not None and process.poll() is None:
+            process.terminate()
         bridge.shutdown()

@@ -28,7 +28,7 @@ export function createOverlayBrowserWindow(options: CreateOverlayWindowOptions):
     title: `YT Live Translator - ${options.type}`,
     show: options.show ?? true,
     webPreferences: {
-      preload: join(__dirname, "../../preload/preload.js"),
+      preload: join(__dirname, "../preload/preload.cjs"),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -46,7 +46,7 @@ export function createOverlayBrowserWindow(options: CreateOverlayWindowOptions):
   if (process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(`${process.env.ELECTRON_RENDERER_URL}?${params.toString()}`);
   } else {
-    win.loadFile(join(__dirname, "../../renderer/index.html"), {
+    win.loadFile(join(__dirname, "../renderer/index.html"), {
       query: Object.fromEntries(params.entries())
     });
   }
