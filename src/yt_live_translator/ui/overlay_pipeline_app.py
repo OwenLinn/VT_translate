@@ -590,60 +590,67 @@ def _run_continuous_streaming_asr_pipeline(
     )
 
     is_echo = options.translation_mode == "echo"
-    translation_worker: StreamingTranslationWorker | None = None
 
-    if is_echo:
-
-        def _emit_translated(evt, merged_text: str | None = None) -> None:
-            source = merged_text if merged_text is not None else evt.source_text
-            translated = translate(source, options.source_language, options.target_language)
-            pipe_event = StreamingPipelineEvent(
-                kind=evt.kind,
-                asr=_make_asr_result(evt, options.source_language),
-                translation=_make_translation_result_raw(
-                    segment_id=evt.segment_id,
-                    source_text=source,
-                    translated_text=translated,
-                    options=options,
-                ),
-            )
-            on_streaming_event(pipe_event, None, subtitle_log)
-    else:
-        def _on_worker_result(result: StreamingTranslationResult) -> None:
-            pipe_event = StreamingPipelineEvent(
-                kind=result.kind,
-                asr=_make_asr_result_raw(
-                    segment_id=result.segment_id,
-                    source_text=result.source_text,
-                    source_language=result.source_language,
-                    start_time=result.start_time,
-                    end_time=result.end_time,
-                    asr_latency_ms=result.asr_latency_ms,
-                ),
-                translation=_make_translation_result_raw(
-                    segment_id=result.segment_id,
-                    source_text=result.source_text,
-                    translated_text=result.translated_text,
-                    options=options,
-                    translation_latency_ms=result.translation_latency_ms,
-                ),
-            )
-            on_streaming_event(pipe_event, None, subtitle_log)
-
-        translation_worker = StreamingTranslationWorker(
-            translate=translate,
-            on_result=_on_worker_result,
-            source_language=options.source_language,
-            target_language=options.target_language,
-            session_started_monotonic=time.monotonic(),
-            update_status=update_status,
-            append_log=lambda msg: _append_result_log(options, msg),
-        )
-        translation_worker.start()
+    STALE_CLEAR_SECONDS = 8.0
+    last_emitted_monotonic = time.monotonic()
+    subtitle_is_cleared = False
 
     pending_text: str | None = None
     pending_start: float | None = None
-    fragment_stats = {"pending": 0, "merged": 0, "dropped": 0}
+    pending_merge_count: int = 0
+    fragment_stats = {"pending": 0, "merged": 0, "dropped": 0, "overlap_trim": 0, "too_long": 0}
+
+    def _emit_clear_subtitle() -> None:
+        nonlocal subtitle_is_cleared
+        if subtitle_is_cleared:
+            return
+        subtitle_is_cleared = True
+        _append_result_log(
+            options,
+            f"[streaming-idle] stale subtitle clear after {STALE_CLEAR_SECONDS}s",
+        )
+        clear_event = StreamingPipelineEvent(
+            kind="clear",
+            asr=_make_asr_result_raw(
+                segment_id=0,
+                source_text="",
+                source_language=options.source_language,
+                start_time=0.0,
+                end_time=0.0,
+                asr_latency_ms=0.0,
+            ),
+            translation=_make_translation_result_raw(
+                segment_id=0,
+                source_text="",
+                translated_text="",
+                options=options,
+            ),
+        )
+        on_streaming_event(clear_event, None, subtitle_log)
+
+    def _on_worker_result_emit(result: StreamingTranslationResult) -> None:
+        nonlocal last_emitted_monotonic, subtitle_is_cleared
+        pipe_event = StreamingPipelineEvent(
+            kind=result.kind,
+            asr=_make_asr_result_raw(
+                segment_id=result.segment_id,
+                source_text=result.source_text,
+                source_language=result.source_language,
+                start_time=result.start_time,
+                end_time=result.end_time,
+                asr_latency_ms=result.asr_latency_ms,
+            ),
+            translation=_make_translation_result_raw(
+                segment_id=result.segment_id,
+                source_text=result.source_text,
+                translated_text=result.translated_text,
+                options=options,
+                translation_latency_ms=result.translation_latency_ms,
+            ),
+        )
+        on_streaming_event(pipe_event, None, subtitle_log)
+        last_emitted_monotonic = time.monotonic()
+        subtitle_is_cleared = False
 
     def _maybe_emit(evt, merged_text: str | None = None) -> None:
         if is_echo:
@@ -667,6 +674,209 @@ def _run_continuous_streaming_asr_pipeline(
                 end_time=evt.end_time,
             )
 
+    translation_worker: StreamingTranslationWorker | None = None
+
+    if is_echo:
+
+        def _emit_translated(evt, merged_text: str | None = None) -> None:
+            source = merged_text if merged_text is not None else evt.source_text
+            translated = translate(source, options.source_language, options.target_language)
+            pipe_event = StreamingPipelineEvent(
+                kind=evt.kind,
+                asr=_make_asr_result(evt, options.source_language),
+                translation=_make_translation_result_raw(
+                    segment_id=evt.segment_id,
+                    source_text=source,
+                    translated_text=translated,
+                    options=options,
+                ),
+            )
+            on_streaming_event(pipe_event, None, subtitle_log)
+    else:
+        translation_worker = StreamingTranslationWorker(
+            translate=translate,
+            on_result=_on_worker_result_emit,
+            source_language=options.source_language,
+            target_language=options.target_language,
+            session_started_monotonic=time.monotonic(),
+            mode="fresh",
+            max_final_queue=1,
+            max_display_lag_ms=8000,
+            max_task_age_ms=4500,
+            update_status=update_status,
+            append_log=lambda msg: _append_result_log(options, msg),
+        )
+        translation_worker.start()
+
+    def _merge_pending(current: str) -> str | None:
+        nonlocal pending_text, pending_start, pending_merge_count
+        if not pending_text:
+            return current
+
+        max_merged_len = 60
+
+        if len(pending_text) > 30:
+            _append_result_log(
+                options,
+                f"[streaming-fragment] drop pending too long before merge: "
+                f"pending_len={len(pending_text)} max_pending=30",
+            )
+            fragment_stats["dropped"] += 1
+            fragment_stats["too_long"] += 1
+            pending_text = None
+            pending_start = None
+            pending_merge_count = 0
+            if len(current) <= max_merged_len and not _is_probable_ja_fragment(current):
+                _append_result_log(
+                    options,
+                    "[streaming-fragment] drop pending and use current "
+                    f"current_len={len(current)}",
+                )
+                return current
+            _append_result_log(
+                options,
+                "[streaming-fragment] drop pending and skip current "
+                f"current_len={len(current)} fragment_like={_is_probable_ja_fragment(current)}",
+            )
+            fragment_stats["dropped"] += 1
+            return None
+
+        overlap = _find_max_overlap_suffix_prefix(pending_text, current, min_overlap=4)
+        if overlap > 0:
+            current_trimmed = current[overlap:]
+            fragment_stats["overlap_trim"] += 1
+        else:
+            current_trimmed = current
+        merged = pending_text.rstrip("\u2026\u3001\u3002 ") + current_trimmed
+
+        if len(merged) > max_merged_len:
+            _append_result_log(
+                options,
+                f"[streaming-fragment] drop merged too long: "
+                f"merged_len={len(merged)} max={max_merged_len} "
+                f"pending_len={len(pending_text)} current_len={len(current)}",
+            )
+            fragment_stats["dropped"] += 1
+            fragment_stats["too_long"] += 1
+            pending_text = None
+            pending_start = None
+            pending_merge_count = 0
+            if len(current) <= max_merged_len and not _is_probable_ja_fragment(current):
+                _append_result_log(
+                    options,
+                    "[streaming-fragment] drop pending and use current "
+                    f"current_len={len(current)}",
+                )
+                return current
+            _append_result_log(
+                options,
+                "[streaming-fragment] drop pending and skip current "
+                f"current_len={len(current)} fragment_like={_is_probable_ja_fragment(current)}",
+            )
+            fragment_stats["dropped"] += 1
+            return None
+
+        _append_result_log(
+            options,
+            f"[streaming-fragment] emit merged: pending=\"{pending_text[:40]}\" "
+            f"overlap={overlap} current=\"{current[:40]}\" "
+            f"merged_len={len(merged)} merge_cnt={pending_merge_count}",
+        )
+        pending_text = None
+        pending_start = None
+        pending_merge_count = 0
+        fragment_stats["merged"] += 1
+        if _is_probable_ja_fragment(merged):
+            norm = _normalize_fragment_text(merged)
+            if len(norm) < 5:
+                _append_result_log(
+                    options,
+                    f"[streaming-fragment] drop merged still fragment: \"{merged[:60]}\"",
+                )
+                fragment_stats["dropped"] += 1
+                return None
+        return merged
+
+    def _handle_fragment(source: str) -> None:
+        nonlocal pending_text, pending_start, pending_merge_count
+        if pending_merge_count >= 1:
+            _append_result_log(
+                options,
+                f"[streaming-fragment] drop stale pending due repeated fragment "
+                f"old=\"{pending_text[:40]}\"",
+            )
+            fragment_stats["dropped"] += 1
+            pending_text = source
+            pending_start = 0.0
+            pending_merge_count = 0
+            fragment_stats["pending"] += 1
+            _append_result_log(
+                options,
+                f"[streaming-fragment] pending fragment: \"{source[:60]}\" "
+                f"len={len(source)}",
+            )
+            return
+
+        if pending_text is not None and len(pending_text) > 30:
+            _append_result_log(
+                options,
+                f"[streaming-fragment] drop pending too long: "
+                f"len={len(pending_text)} \"{pending_text[:60]}\"",
+            )
+            fragment_stats["dropped"] += 1
+            fragment_stats["too_long"] += 1
+            pending_text = source
+            pending_start = 0.0
+            pending_merge_count = 0
+            fragment_stats["pending"] += 1
+            _append_result_log(
+                options,
+                f"[streaming-fragment] pending fragment: \"{source[:60]}\" "
+                f"len={len(source)}",
+            )
+            return
+
+        if pending_text:
+            merged = pending_text.rstrip("\u2026\u3001\u3002 ") + source
+            if len(merged) > 60:
+                _append_result_log(
+                    options,
+                    f"[streaming-fragment] drop merged too long: "
+                    f"pending_len={len(pending_text)} current_len={len(source)} "
+                    f"merged_len={len(merged)}",
+                )
+                fragment_stats["dropped"] += 1
+                fragment_stats["too_long"] += 1
+                pending_text = source
+                pending_start = 0.0
+                pending_merge_count = 0
+                fragment_stats["pending"] += 1
+                _append_result_log(
+                    options,
+                    f"[streaming-fragment] pending fragment: \"{source[:60]}\" "
+                    f"len={len(source)}",
+                )
+                return
+            pending_text = merged
+            pending_merge_count += 1
+            fragment_stats["pending"] += 1
+            _append_result_log(
+                options,
+                f"[streaming-fragment] merge pending fragment: + "
+                f"\"{source[:40]}\" cnt={pending_merge_count} "
+                f"pending_len={len(pending_text)}",
+            )
+        else:
+            pending_text = source
+            pending_start = 0.0
+            pending_merge_count = 0
+            fragment_stats["pending"] += 1
+            _append_result_log(
+                options,
+                f"[streaming-fragment] pending fragment: \"{source[:60]}\" "
+                f"len={len(source)}",
+            )
+
     for frame in stream_loopback_frames(
         frame_ms=frame_ms,
         sample_rate=runtime_config.audio.sample_rate,
@@ -683,37 +893,15 @@ def _run_continuous_streaming_asr_pipeline(
                 continue
 
             if options.source_language == "ja" and _is_probable_ja_fragment(source):
-                if pending_text:
-                    pending_text = pending_text.rstrip("\u2026\u3001\u3002 ") + source
-                    fragment_stats["pending"] += 1
-                    _append_result_log(
-                        options,
-                        f"[streaming-fragment] merge pending fragment: + "
-                        f'"{source[:40]}"',
-                    )
-                else:
-                    pending_text = source
-                    pending_start = event.start_time
-                    fragment_stats["pending"] += 1
-                    _append_result_log(
-                        options,
-                        f'[streaming-fragment] pending fragment: "{source[:60]}"',
-                    )
+                _handle_fragment(source)
                 continue
 
-            if pending_text:
-                translation_source = pending_text.rstrip("\u2026\u3001\u3002 ") + source
-                _append_result_log(
-                    options,
-                    f'[streaming-fragment] emit merged: pending="{pending_text[:40]}" '
-                    f'+ current="{source[:40]}"',
-                )
-                _maybe_emit(event, merged_text=translation_source)
-                pending_text = None
-                pending_start = None
-                fragment_stats["merged"] += 1
-            else:
-                _maybe_emit(event)
+            merged = _merge_pending(source)
+            if merged is not None:
+                _maybe_emit(event, merged_text=merged)
+
+        if not is_echo and time.monotonic() - last_emitted_monotonic > STALE_CLEAR_SECONDS:
+            _emit_clear_subtitle()
 
     flush_events = session.flush()
     for event in flush_events:
@@ -721,28 +909,27 @@ def _run_continuous_streaming_asr_pipeline(
             _emit_translated(event)
             continue
 
-        if pending_text and not _is_probable_ja_fragment(pending_text):
-            flush_source = pending_text.rstrip("\u2026\u3001\u3002 ") + event.source_text
-            _append_result_log(
-                options,
-                f'[streaming-fragment] flush merged: pending="{pending_text[:40]}" '
-                f'+ flush="{event.source_text[:40]}"',
-            )
-            _maybe_emit(event, merged_text=flush_source)
-            fragment_stats["merged"] += 1
+        source = event.source_text
+
+        if pending_text and not _is_probable_ja_fragment(source):
+            merged = _merge_pending(source)
+            if merged is not None:
+                _maybe_emit(event, merged_text=merged)
         elif pending_text:
             norm = _normalize_fragment_text(pending_text)
             if len(norm) >= 6:
                 _append_result_log(
                     options,
-                    f'[streaming-fragment] flush long pending: "{pending_text[:60]}"',
+                    f"[streaming-fragment] flush long pending: \"{pending_text[:60]}\" "
+                    f"len={len(pending_text)} norm_len={len(norm)}",
                 )
                 _maybe_emit(event, merged_text=pending_text)
                 fragment_stats["merged"] += 1
             else:
                 _append_result_log(
                     options,
-                    f'[streaming-fragment] drop tiny pending: "{pending_text[:60]}"',
+                    f"[streaming-fragment] drop tiny pending: \"{pending_text[:60]}\" "
+                    f"len={len(pending_text)} norm_len={len(norm)}",
                 )
                 fragment_stats["dropped"] += 1
                 _maybe_emit(event)
@@ -750,13 +937,16 @@ def _run_continuous_streaming_asr_pipeline(
             _maybe_emit(event)
         pending_text = None
         pending_start = None
+        pending_merge_count = 0
 
     if translation_worker is not None:
         translation_worker.stop(drain_final=True)
         _append_result_log(
             options,
             f"[streaming-fragment] stats pending={fragment_stats['pending']} "
-            f"merged={fragment_stats['merged']} dropped={fragment_stats['dropped']}",
+            f"merged={fragment_stats['merged']} dropped={fragment_stats['dropped']} "
+            f"overlap_trim={fragment_stats['overlap_trim']} "
+            f"too_long={fragment_stats['too_long']}",
         )
 
     _append_result_log(options, "[Status] True streaming ASR pipeline finished")
@@ -872,6 +1062,15 @@ def _is_probable_ja_fragment(text: str) -> bool:
             return True
 
     return False
+
+
+def _find_max_overlap_suffix_prefix(left: str, right: str, min_overlap: int = 4) -> int:
+    max_possible = min(len(left), len(right))
+    best = 0
+    for n in range(min_overlap, max_possible + 1):
+        if left[-n:] == right[:n]:
+            best = n
+    return best
 
 
 def _load_audio(runtime_config: RuntimeConfig, options: OverlayPipelineOptions):

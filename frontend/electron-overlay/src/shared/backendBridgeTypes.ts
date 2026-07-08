@@ -1,4 +1,4 @@
-export type SubtitleKind = "partial" | "final";
+export type SubtitleKind = "partial" | "final" | "clear";
 export type RuntimeStatus = "idle" | "starting" | "running" | "stopping" | "error";
 export type CommandName =
   | "start"

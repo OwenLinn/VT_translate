@@ -678,6 +678,33 @@ This file records completed development tasks.
 
 ## 2026-07-04 Streaming Translation Backpressure v1
 
+## 2026-07-04 DeepSeek Live Freshness Mode v1
+
+- Completed:
+  - Added `mode: Literal["balanced", "fresh"]` to `StreamingTranslationWorker`
+    (default `"fresh"` for live streaming pipeline).
+  - Fresh mode: `submit_partial()` skips translation entirely — text is
+    tracked via `_latest_partial_text` for debugging but never queued to
+    the API. Logged as `[translation-worker] skip partial fresh mode`.
+  - Fresh mode final queue: `max_final_queue=1`, `max_display_lag_ms=8000`,
+    `max_task_age_ms=4500`. Queued finals are **replaced** (not just overflow)
+    by newer submissions — logged as `queued_final_replaced`.
+  - `max_display_lag_ms` tightened from 10000→8000; stale-age threshold
+    from 6000→4500ms.
+  - `_display_lags: list[float]` accumulated for avg calculation at stop.
+  - Stop summary now includes `mode=`, `avg_display_lag_ms`, and
+    differentiated `queued_replaced` / `final_dropped` counts.
+  - Pipeline passes `mode="fresh"` + tight params when constructing the
+    worker for `--translation deepseek`.
+  - Did not modify Electron, ASR, echo mode, or chunked fallback.
+- Tests:
+  - `.venv\Scripts\python.exe -m py_compile` passed for both files.
+- Notes:
+  - Echo mode fully unaffected.
+  - Balanced mode (old behavior) remains available via constructor param.
+  - Partial-free design means DeepSeek API time is spent only on final
+    translations, eliminating partial queue wait as a lag contributor.
+
 - Completed:
   - **Lag metrics**: `queue_wait_ms`, `translation_call_ms` (renamed),
     `display_lag_ms`, `queue_depth` logged per task. `display_lag_ms`

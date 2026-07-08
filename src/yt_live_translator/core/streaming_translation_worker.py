@@ -79,6 +79,31 @@ def _normalize_japanese(text: str) -> str:
     return "".join(result)
 
 
+JA_NON_SPEECH_PATTERNS = (
+    "んぐ", "ちゅぱ", "ちゅ", "ぺろ", "ごく", "こく",
+    "じゅる", "ぢゅ", "くちゅ", "はむ", "もぐ", "ぱく",
+)
+
+
+def _is_non_speech_junk(text: str, source_language: str) -> bool:
+    if source_language not in ("ja", "auto"):
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return True
+    norm = _normalize_japanese(stripped)
+    if len(norm) < 3:
+        return True
+    for pattern in JA_NON_SPEECH_PATTERNS:
+        if pattern in norm:
+            remaining = norm
+            for p2 in JA_NON_SPEECH_PATTERNS:
+                remaining = remaining.replace(p2, "")
+            if len(remaining) < 3:
+                return True
+    return False
+
+
 def _is_too_short_for_translation(text: str, source_language: str) -> bool:
     stripped = text.strip()
     if not stripped:
@@ -126,6 +151,7 @@ class StreamingTranslationWorker:
         source_language: str,
         target_language: str,
         session_started_monotonic: float,
+        mode: Literal["balanced", "fresh"] = "fresh",
         partial_timeout_seconds: float = 4.0,
         final_timeout_seconds: float = 6.0,
         max_final_queue: int = 2,
@@ -139,6 +165,7 @@ class StreamingTranslationWorker:
         self._source_language = source_language
         self._target_language = target_language
         self._session_started = session_started_monotonic
+        self._mode = mode
         self._partial_timeout = partial_timeout_seconds
         self._final_timeout = final_timeout_seconds
         self._max_final_queue = max_final_queue
@@ -152,6 +179,7 @@ class StreamingTranslationWorker:
         self._final_queue_lock = threading.Lock()
 
         self._partial_lock = threading.Lock()
+        self._latest_partial_text: str = ""
         self._latest_partial_task: StreamingTranslationTask | None = None
         self._partial_generation: int = 0
 
@@ -160,6 +188,12 @@ class StreamingTranslationWorker:
         self._thread: threading.Thread | None = None
 
         self._last_emitted_translation: str = ""
+
+        self._display_lags: list[float] = []
+
+        self._consecutive_drops: int = 0
+        self._consecutive_timeouts: int = 0
+        self._last_successful_emit_monotonic: float = 0.0
 
         self._stats: dict[str, int] = {
             "partial_submitted": 0,
@@ -170,6 +204,7 @@ class StreamingTranslationWorker:
             "partial_dropped_timeout": 0,
             "partial_dropped_short": 0,
             "partial_dropped_age": 0,
+            "partial_skipped_fresh": 0,
             "final_submitted": 0,
             "final_emitted": 0,
             "final_dropped_empty": 0,
@@ -178,6 +213,7 @@ class StreamingTranslationWorker:
             "final_dropped_age": 0,
             "final_dropped_overflow": 0,
             "final_dropped_lag": 0,
+            "queued_final_replaced": 0,
             "empty_fallback_count": 0,
             "duplicate_skipped": 0,
             "timeout_count": 0,
@@ -202,7 +238,7 @@ class StreamingTranslationWorker:
         )
         self._thread.start()
         self._log(
-            f"[translation-worker] started "
+            f"[translation-worker] started mode={self._mode} "
             f"max_final_q={self._max_final_queue} "
             f"max_age_ms={self._max_task_age_ms:.0f} "
             f"max_lag_ms={self._max_display_lag_ms:.0f}"
@@ -217,10 +253,29 @@ class StreamingTranslationWorker:
         start_time: float,
         end_time: float,
     ) -> None:
+        is_fresh = self._mode == "fresh"
+
+        with self._partial_lock:
+            self._latest_partial_text = source_text
+
+        if _is_non_speech_junk(source_text, self._source_language):
+            self._log(
+                f'[translation-worker] drop non-speech asr junk partial seg={segment_id} text="{source_text[:40]}"'
+            )
+            return
+
         if _is_too_short_for_translation(source_text, self._source_language):
             self._stats["partial_dropped_short"] += 1
             self._log(
                 f'[translation-worker] drop short partial seg={segment_id} text="{source_text[:40]}"'
+            )
+            return
+
+        if is_fresh:
+            self._stats["partial_skipped_fresh"] += 1
+            self._log(
+                f'[translation-worker] skip partial fresh mode seg={segment_id} '
+                f'text="{source_text[:40]}"'
             )
             return
 
@@ -263,6 +318,11 @@ class StreamingTranslationWorker:
         start_time: float,
         end_time: float,
     ) -> None:
+        if _is_non_speech_junk(source_text, self._source_language):
+            self._log(
+                f'[translation-worker] drop non-speech asr junk final seg={segment_id} text="{source_text[:40]}"'
+            )
+            return
         if _is_too_short_for_translation(source_text, self._source_language):
             self._stats["final_dropped_short"] += 1
             self._log(
@@ -293,10 +353,17 @@ class StreamingTranslationWorker:
                 except queue.Empty:
                     pass
                 self._final_queue_depth -= 1
-                self._log(
-                    f"[translation-worker] drop oldest final due queue overflow "
-                    f"new_seg={segment_id} max={self._max_final_queue}"
-                )
+                if self._mode == "fresh":
+                    self._stats["queued_final_replaced"] += 1
+                    self._log(
+                        f"[translation-worker] replace queued final "
+                        f"new_seg={segment_id} max={self._max_final_queue}"
+                    )
+                else:
+                    self._log(
+                        f"[translation-worker] drop oldest final due queue overflow "
+                        f"new_seg={segment_id} max={self._max_final_queue}"
+                    )
             self._final_queue.put(task)
             self._final_queue_depth += 1
 
@@ -313,19 +380,22 @@ class StreamingTranslationWorker:
         if self._thread is not None:
             self._thread.join(timeout=15.0)
             self._thread = None
+        avg_lag = (
+            sum(self._display_lags) / len(self._display_lags)
+            if self._display_lags
+            else 0.0
+        )
         self._log(
-            f"[translation-worker] stopped "
+            f"[translation-worker] summary "
+            f"mode={self._mode} "
             f"final_emitted={self._stats['final_emitted']} "
-            f"partial_emitted={self._stats['partial_emitted']} "
-            f"stale={self._stats['partial_dropped_stale']} "
-            f"empty={self._stats['partial_dropped_empty'] + self._stats['final_dropped_empty']} "
-            f"timeout={self._stats['timeout_count']} "
-            f"dup={self._stats['duplicate_skipped']} "
-            f"short={self._stats['partial_dropped_short'] + self._stats['final_dropped_short']} "
-            f"age={self._stats['partial_dropped_age'] + self._stats['final_dropped_age']} "
-            f"overflow={self._stats['final_dropped_overflow']} "
-            f"lag={self._stats['final_dropped_lag']} "
-            f"fb_drop={self._stats['fallback_dropped']}"
+            f"final_dropped="
+            f"{self._stats['final_dropped_age'] + self._stats['final_dropped_lag'] + self._stats['final_dropped_overflow'] + self._stats['final_dropped_empty'] + self._stats['final_dropped_timeout'] + self._stats['final_dropped_short']} "
+            f"partial_skipped={self._stats['partial_skipped_fresh']} "
+            f"queued_replaced={self._stats['queued_final_replaced']} "
+            f"lag_dropped={self._stats['final_dropped_lag']} "
+            f"fb_dropped={self._stats['fallback_dropped']} "
+            f"avg_display_lag_ms={avg_lag:.0f}"
         )
 
     def _now_monotonic_ms(self) -> float:
@@ -376,6 +446,7 @@ class StreamingTranslationWorker:
                 f"[translation-worker] drop stale {task.kind} before translate "
                 f"seg={task.segment_id} age_ms={queue_wait_ms:.0f}"
             )
+            self._check_consecutive_reset("age_drop")
             return
 
         timeout = self._partial_timeout if task.kind == "partial" else self._final_timeout
@@ -412,6 +483,7 @@ class StreamingTranslationWorker:
                 f"[translation-worker] timeout {task.kind} seg={task.segment_id} "
                 f"call_ms={translation_call_ms:.0f} q_wait={queue_wait_ms:.0f}"
             )
+            self._note_timeout()
             return
 
         if error_container:
@@ -534,7 +606,35 @@ class StreamingTranslationWorker:
             f"display_lag={display_lag:.0f}ms "
             f"qd={self.queue_depth}"
         )
+        self._display_lags.append(display_lag)
+        self._consecutive_drops = 0
+        self._consecutive_timeouts = 0
+        self._last_successful_emit_monotonic = time.monotonic()
         self._on_result(result)
+
+    def _check_consecutive_reset(self, reason: str) -> None:
+        self._consecutive_drops += 1
+        if self._consecutive_drops >= 5 or self._consecutive_timeouts >= 3:
+            self._log(
+                f"[translation-worker] reset stale backlog reason={reason} "
+                f"drops={self._consecutive_drops} timeouts={self._consecutive_timeouts}"
+            )
+            with self._partial_lock:
+                self._latest_partial_task = None
+                self._latest_partial_text = ""
+            while True:
+                try:
+                    self._final_queue.get_nowait()
+                    with self._final_queue_lock:
+                        self._final_queue_depth = max(0, self._final_queue_depth - 1)
+                except queue.Empty:
+                    break
+            self._consecutive_drops = 0
+            self._consecutive_timeouts = 0
+
+    def _note_timeout(self) -> None:
+        self._consecutive_timeouts += 1
+        self._check_consecutive_reset("timeout")
 
     def _translate_retry(self, task: StreamingTranslationTask) -> str:
         try:

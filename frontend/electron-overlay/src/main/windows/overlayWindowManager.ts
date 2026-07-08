@@ -126,6 +126,22 @@ export class OverlayWindowManager {
 
   applyBackendEvent(event: BackendEvent): void {
     if (event.type === "subtitle") {
+      if (event.kind === "clear") {
+        console.log("[manager] subtitle clear");
+        this.patchState({
+          backendConnected: true,
+          runtimeStatus: "running",
+          running: true,
+          subtitle: {
+            sourceText: "",
+            translatedText: "",
+            isPartial: false,
+            segmentId: 0,
+            latencyMs: null
+          }
+        });
+        return;
+      }
       const partial = event.kind === "partial";
       console.log(
         `[manager] subtitle ${event.kind} seg=${event.segmentId} src="${event.source.slice(0, 40)}" tr="${event.translation.slice(0, 40)}" latency=${event.latencyMs}ms`

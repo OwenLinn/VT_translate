@@ -8,7 +8,7 @@ export type PopoverKind = "display" | "language" | "model" | null;
 interface OverlayState {
   source: string;
   translation: string;
-  subtitleKind: "partial" | "final";
+  subtitleKind: "partial" | "final" | "clear";
   segmentId: number;
   latencyMs: number | null;
   status: RuntimeStatus;
@@ -121,7 +121,7 @@ export const useOverlayStore = create<OverlayState>((set) => ({
   setTranslationModel: (translationModel) => set({ translationModel }),
   applyUiState: (state) =>
     set({
-      source: state.subtitle.sourceText,
+      source: state.subtitle.translatedText === "" ? "" : state.subtitle.sourceText,
       translation: state.subtitle.translatedText,
       subtitleKind: state.subtitle.isPartial ? "partial" : "final",
       segmentId: state.subtitle.segmentId,
